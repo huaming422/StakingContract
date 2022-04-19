@@ -11,7 +11,7 @@ contract Loan {
   uint256 public lendCount;
   uint256 public totalLiquidity;
   address public tokenAddress;
-  uint256 public ethPerToken = 0.0001 ether; // 0.001 ether = 1 BOW
+  uint256 public ethPerToken = 0.0001 ether; // 0.001 ether = 1 ODON
 
   struct LoanRequest {
     address borrower;

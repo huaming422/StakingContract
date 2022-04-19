@@ -1,16 +1,16 @@
 const hre = require("hardhat");
-// token: 0x85d1b81281AEF63122D97b556682Cf9934200b7F
-// loan:  0xaaE54151De7137E080538d84b7b8ab02F58A9768
-// npx hardhat verify --network rinkeby 0xaaE54151De7137E080538d84b7b8ab02F58A9768 "0x85d1b81281AEF63122D97b556682Cf9934200b7F"
+// token: 0xd9D905400b444732B6b47Df12735f9253e44DA06
+// loan:  0x6DCaa48345deA866702eFbd084094449b6c83A40
+// npx hardhat verify --network testnet 0x6DCaa48345deA866702eFbd084094449b6c83A40 "0xd9D905400b444732B6b47Df12735f9253e44DA06"
 async function main() {
-    //const BowToken = await hre.ethers.getContractFactory("BowToken");
+    const OdonToken = await hre.ethers.getContractFactory("Token");
     const Loan = await hre.ethers.getContractFactory("Loan");
-    //const bowToken = await BowToken.deploy();
-    //await bowToken.deployed();
-    const loan = await Loan.deploy("0x85d1b81281AEF63122D97b556682Cf9934200b7F");
+    const odonToken = await OdonToken.deploy();
+    await odonToken.deployed();
+    const loan = await Loan.deploy(odonToken.address);
     await loan.deployed();
 
-    // console.log("BowToken deployed to:", bowToken.address);
+    console.log("OdonToken deployed to:", odonToken.address);
     console.log("Loan deployed to:", loan.address);
 }
 
