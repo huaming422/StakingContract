@@ -1,1052 +1,917 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.7.0 <0.9.0;
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity >=0.4.22 <0.9.0;
 
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "./IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "./PriceConsumerV3.sol";
+import "./libraries/WadMath.sol";
+import "./libraries/Math.sol";
 
-contract Loan {
+/**
+ * @title Loan contract
+ * @notice Implements the core contract of lending.
+ * this contract manages all states and handles user interaction.
+ * @author dderabin
+ **/
+contract Loan is Ownable {
     using SafeMath for uint256;
-    address public owner;
+    using WadMath for uint256;
+    using Math for uint256;
     uint256 public loanCount;
     uint256 public lendCount;
-    uint256 public totalLiquidity;
+    uint256 public odonTotalLiquidity;
     uint256 public usdcTotalLiquidity;
     uint256 public usdtTotalLiquidity;
-    uint256 public wbtcTotalLiquidity;
+    uint256 public btcTotalLiquidity;
+    uint256 public totalLiquidity;
+    uint256 public odonPrice = 0.75 * 1e18;
+    address public movrAddress;
     address public odonAddress;
     address public usdcAddress;
     address public usdtAddress;
-    address public wbtcAddress;
-    uint256 public ethPerOdon = 0.0001 ether; // 0.0001 ether = 1 ODON
-    uint256 public usdcPerOdon = 0.01 ether; // 0.01 usdc = 1 ODON
-    uint256 public usdtPerOdon = 0.01 ether; // 0.01 usdt = 1 ODON
-    uint256 public wbtcPerOdon = 0.001 ether; // 0.001 wbtc = 1 ODON
+    address public btcAddress;
+    uint256 public usdtLTV = 75 * 1e18;
+    uint256 public usdcLTV = 75 * 1e18;
+    uint256 public btcLTV = 75 * 1e18;
+    uint256 public dangerousLTV = 85 * 1e18;
+    uint256 public firstAddAPY = 3 * 1e18;
+    uint256 public secondAddAPY = 5 * 1e18;
+    uint256 public usdcBorrowAPY = 10 * 1e18;
+    uint256 public usdtBorrowAPY = 11 * 1e18;
+    uint256 public wbtcBorrowAPY = 12 * 1e18;
+    uint256 public usdcLendAPY = 5 * 1e18;
+    uint256 public usdtLendAPY = 6 * 1e18;
+    uint256 public wbtcLendAPY = 8 * 1e18;
+    bool public loanModeFirst = false;
 
+    /**
+     * @dev price oracle of the lending pool contract.
+     */
+    PriceConsumerV3 priceOracle;
+
+    /**
+     * @dev the struct for storing the Lend data
+     */
+    struct LendRequest {
+        address lender;
+        uint256 lendId;
+        uint256 lendAmount;
+        uint256 paybackAmount;
+        uint256 timeLend;
+        uint256 timeCanGetInterest; // lend more than 30 days can get interest
+        bool retrieved;
+        uint256 mtype;
+    }
+
+    /**
+     * @dev the struct for storing the Loan data
+     */
     struct LoanRequest {
         address borrower;
-        uint256 loanAmountEther;
-        uint256 loanAmountUsdc;
-        uint256 loanAmountUsdt;
-        uint256 loanAmountWbtc;
+        uint256 loanAmount;
         uint256 collateralAmount;
-        uint256 paybackAmountEther;
-        uint256 paybackAmountUsdc;
-        uint256 paybackAmountUsdt;
-        uint256 paybackAmountWbtc;
+        uint256 paybackAmount;
         uint256 loanDueDate;
         uint256 duration;
         uint256 loanId;
         bool isPayback;
-        bool isLoanEther;
-        bool isLoanUsdc;
-        bool isLoanUsdt;
-        bool isLoanWbtc;
+        bool isLiquidate;
+        uint256 mtype;
+        uint256 ctype;
     }
 
-    struct LendRequest {
-        address lender;
-        uint256 lendId;
-        uint256 lendAmountEther;
-        uint256 lendAmountUsdc;
-        uint256 lendAmountUsdt;
-        uint256 lendAmountWbtc;
-        uint256 paybackAmountEther;
-        uint256 paybackAmountUsdc;
-        uint256 paybackAmountUsdt;
-        uint256 paybackAmountWbtc;
-        uint256 timeLend;
-        uint256 timeCanGetInterest; // lend more than 30 days can get interest
-        bool retrieved;
-        bool isLendEther;
-        bool isLendUsdc;
-        bool isLendUsdt;
-        bool isLendWbtc;
-    }
-
+    /**
+     * @dev the mapping from the user to the struct of that Loan request
+     * user address => pool
+     */
     mapping(address => uint256) public userLoansCount;
+
+    /**
+     * @dev the mapping from the user to the struct of that Lend request
+     * user address => pool
+     */
     mapping(address => uint256) public userLendsCount;
+
+    /**
+     * @dev the mapping from user address to LoanRequest to the user data of
+     * that loans
+     */
     mapping(address => mapping(uint256 => LoanRequest)) public loans;
+
+    /**
+     * @dev the mapping from user address to LendRequest to the user data of
+     * that lends
+     */
     mapping(address => mapping(uint256 => LendRequest)) public lends;
 
+    /**
+     * @dev list of all users who loan on the loan contract.
+     */
+    address[] public LoanUserList;
+
+    /**
+     * @dev list of all users who lend on the lend contract.
+     */
+    address[] public LendUserList;
+
+    /**
+     * @dev emitted on borrow
+     * @param borrower the address of borrower
+     * @param loanAmount the amount to borrow
+     * @param collateralAmount the amount of collateral
+     * @param paybackAmount the amount of payback
+     * @param loanDueDate the duadate of borrow
+     * @param duration the duration of borrow
+     * @param mtype the type of borrow token
+     * @param ctype the type of collater token
+     */
     event NewLoan(
         address indexed borrower,
-        uint256 loanAmountEther,
-        uint256 loanAmountUsdc,
-        uint256 loanAmountUsdt,
-        uint256 loanAmountWbtc,
+        uint256 loanAmount,
         uint256 collateralAmount,
-        uint256 paybackAmountEther,
-        uint256 paybackAmountUsdc,
-        uint256 paybackAmountUsdt,
-        uint256 paybackAmountWbtc,
+        uint256 paybackAmount,
         uint256 loanDueDate,
         uint256 duration,
-        bool isLoanEther,
-        bool isLoanUsdc,
-        bool isLoanUsdt,
-        bool isLoanWbtc
+        uint256 mtype,
+        uint256 ctype
     );
 
+    /**
+     * @dev emitted on init
+     * @param admin the address of admin
+     * @param amount the amount to init
+     * @param mtype the type of init token
+     */
+    event InitBalance(address indexed admin, uint256 amount, uint256 mtype);
+
+    /**
+     * @dev emitted on lend
+     * @param lender the address of lender
+     * @param lendAmount the amount to lend
+     * @param paybackAmount the amount of payback
+     * @param timeLend the time of Lend
+     * @param timeCanGetInterest the flag of can get interest
+     * @param retrieved the flag of retrieved
+     * @param mtype the type of lend token
+     */
     event NewLend(
         address indexed lender,
-        uint256 lendAmountEther,
-        uint256 lendAmountUsdc,
-        uint256 lendAmountUsdt,
-        uint256 lendAmountWbtc,
-        uint256 paybackAmountEther,
-        uint256 paybackAmountUsdc,
-        uint256 paybackAmountUsdt,
-        uint256 paybackAmountWbtc,
+        uint256 lendAmount,
+        uint256 paybackAmount,
         uint256 timeLend,
         uint256 timeCanGetInterest,
         bool retrieved,
-        bool isLendEther,
-        bool isLendUsdc,
-        bool isLendUsdt,
-        bool isLendWbtc
+        uint256 mtype
     );
 
-    event Withdraw(
-        bool isEarnInterest,
-        bool isWithdrawEther,
-        bool isWithdrawUsdc,
-        bool isWithdrawUsdt,
-        bool isWithdrawWbtc,
-        uint256 withdrawAmount
-    );
+    /**
+     * @dev emitted on withdraw
+     * @param isEarnInterest the flag of earn interst
+     * @param withdrawAmount the amount to withdraw
+     * @param mtype the type of token that withdrow
+     */
+    event Withdraw(bool isEarnInterest, uint256 withdrawAmount, uint256 mtype);
 
+    /**
+     * @dev emitted on payback
+     * @param borrower the address of borrower
+     * @param paybackSuccess the flag of payback success
+     * @param paybackTime the time of payback
+     * @param paybackAmount the amount to payback
+     * @param returnCollateralAmount the amount to collateral
+     * @param mtype the type of payback token
+     * @param ctype the type of collateral token
+     */
     event PayBack(
         address borrower,
         bool paybackSuccess,
-        bool isPayBackEther,
-        bool isPayBackUsdc,
-        bool isPayBackUsdt,
-        bool isPayBackWbtc,
         uint256 paybackTime,
         uint256 paybackAmount,
-        uint256 returnCollateralAmount
+        uint256 returnCollateralAmount,
+        uint256 mtype,
+        uint256 ctype
     );
+
+    /**
+     * @dev emitted on payback
+     * @param liquidator the address of borrower
+     * @param ctype the type of token that liquidated
+     * @param liquidateAmount the amount to payback
+     */
+    event Liquidate(address liquidator, uint256 liquidateAmount, uint256 ctype);
+
+    /**
+     * @dev emitted on update borrow apy
+     * @param previousAPY the previous apy
+     * @param newAPY the new apy
+     * @param mtype the type of token
+     */
+    event BorrowAPYUpdated(uint256 previousAPY, uint256 newAPY, uint256 mtype);
+
+    /**
+     * @dev emitted on update lend apy
+     * @param previousAPY the previous apy
+     * @param newAPY the new apy
+     * @param mtype the type of token
+     */
+    event LendAPYUpdated(uint256 previousAPY, uint256 newAPY, uint256 mtype);
+
+    /**
+     * @dev emitted on set price oracle
+     * @param priceOracleAddress the address of the price oracle
+     */
+    event PriceOracleUpdated(address indexed priceOracleAddress);
+
+    /**
+     * @dev emitted on set price of odon
+     * @param _price the address of the price oracle
+     */
+    event OdonPriceUpdated(uint256 _price);
 
     constructor(
         address _odonAddress,
         address _usdcAddress,
         address _usdtAddress,
-        address _wbtcAddress
+        address _btcAddress
     ) {
-        owner = msg.sender;
         loanCount = 1;
         lendCount = 1;
         totalLiquidity = 0;
         usdcTotalLiquidity = 0;
+        odonTotalLiquidity = 0;
         usdtTotalLiquidity = 0;
-        wbtcTotalLiquidity = 0;
+        btcTotalLiquidity = 0;
         odonAddress = _odonAddress;
         usdcAddress = _usdcAddress;
         usdtAddress = _usdtAddress;
-        wbtcAddress = _wbtcAddress;
+        btcAddress = _btcAddress;
     }
 
-    function init(uint256 _amount) public payable {
-        require(totalLiquidity == 0);
-        require(usdcTotalLiquidity == 0);
-        require(usdtTotalLiquidity == 0);
-        require(wbtcTotalLiquidity == 0);
+    function init(uint256 _amount, uint256 mtype) external onlyOwner {
+        // require(totalLiquidity == 0);
+        address tokenAddress;
+        if (mtype == 2) {
+            tokenAddress = usdcAddress;
+        } else if (mtype == 3) {
+            tokenAddress = usdtAddress;
+        } else if (mtype == 4) {
+            tokenAddress = btcAddress;
+        }
         require(
-            IERC20(odonAddress).transferFrom(
+            ERC20(tokenAddress).transferFrom(
                 msg.sender,
                 address(this),
                 _amount
             ),
             "Transaction failed on init function"
         );
-        require(
-            IERC20(usdcAddress).transferFrom(
-                msg.sender,
-                address(this),
-                _amount
-            ),
-            "Transaction failed on init function"
-        );
-        require(
-            IERC20(usdtAddress).transferFrom(
-                msg.sender,
-                address(this),
-                _amount
-            ),
-            "Transaction failed on init function"
-        );
-        require(
-            IERC20(wbtcAddress).transferFrom(
-                msg.sender,
-                address(this),
-                _amount
-            ),
-            "Transaction failed on init function"
-        );
-        IERC20(odonAddress).increaseAllowance(address(this), _amount);
-        IERC20(usdcAddress).increaseAllowance(address(this), _amount);
-        IERC20(usdtAddress).increaseAllowance(address(this), _amount);
-        IERC20(wbtcAddress).increaseAllowance(address(this), _amount);
+        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
         totalLiquidity = address(this).balance;
+        if (mtype == 2) {
+            usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
+        } else if (mtype == 3) {
+            usdcTotalLiquidity = usdtTotalLiquidity.add(_amount);
+        } else if (mtype == 4) {
+            usdcTotalLiquidity = btcTotalLiquidity.add(_amount);
+        }
+
+        emit InitBalance(msg.sender, _amount, mtype);
     }
 
-    // count require odon amount by passing ether amount
-    function etherCollateralAmount(uint256 _amount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount = loan amount * 115%
-        uint256 result = _amount.mul(115).div(100);
-        result = result.div(ethPerOdon);
-        return result;
-    }
-
-    // count require odon amount by passing usdc amount
-    function usdcCollateralAmount(uint256 _amount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount = loan amount * 115%
-        uint256 result = _amount.mul(115).div(100);
-        result = result.div(usdcPerOdon);
-        return result;
-    }
-
-    // count require odon amount by passing wbtc amount
-    function wbtcCollateralAmount(uint256 _amount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount = loan amount * 115%
-        uint256 result = _amount.mul(115).div(100);
-        result = result.div(wbtcPerOdon);
-        return result;
-    }
-
-    // count require odon amount by passing usdt amount
-    function usdtCollateralAmount(uint256 _amount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount = loan amount * 115%
-        uint256 result = _amount.mul(115).div(100);
-        result = result.div(usdtPerOdon);
-        return result;
-    }
-
-    // count ether amount by passing collateral amount
-    function countEtherFromCollateral(uint256 _tokenAmount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount / 115 % = loan amount
-        uint256 result = (_tokenAmount.mul(ethPerOdon)).div(115).mul(100);
-        return result;
-    }
-
-    // count usdc amount by passing collateral amount
-    function countUsdcFromCollateral(uint256 _tokenAmount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount / 115 % = loan amount
-        uint256 result = (_tokenAmount.mul(usdcPerOdon)).div(115).mul(100);
-        return result;
-    }
-
-    // count usdt amount by passing collateral amount
-    function countUsdtFromCollateral(uint256 _tokenAmount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount / 115 % = loan amount
-        uint256 result = (_tokenAmount.mul(usdtPerOdon)).div(115).mul(100);
-        return result;
-    }
-
-    // count wbtc amount by passing collateral amount
-    function countWbtcFromCollateral(uint256 _tokenAmount)
-        public
-        view
-        returns (uint256)
-    {
-        // collateral amount / 115 % = loan amount
-        uint256 result = (_tokenAmount.mul(wbtcPerOdon)).div(115).mul(100);
-        return result;
-    }
-
-    function checkEtherEnoughLiquidity(uint256 _amount)
-        public
-        view
-        returns (bool)
-    {
-        if (_amount > totalLiquidity) {
-            return false;
-        } else {
-            return true;
+    /**
+     * @dev add user to Lend user list
+     * @param _user the address of specific user
+     */
+    function addUserToLendUserList(address _user) public {
+        bool alreadyIn = false;
+        for (uint256 i = 0; i < LendUserList.length; i++) {
+            if (LendUserList[i] == _user) {
+                alreadyIn = true;
+            }
+        }
+        if (alreadyIn == false) {
+            LendUserList.push(_user);
         }
     }
 
-    function checkUsdcEnoughLiquidity(uint256 _amount)
-        public
-        view
-        returns (bool)
-    {
-        if (_amount > usdcTotalLiquidity) {
-            return false;
-        } else {
-            return true;
+    /**
+     * @dev add user to Loan user list
+     * @param _user the address of specific user
+     */
+    function addUserToLoanUserList(address _user) public {
+        bool alreadyIn = false;
+        for (uint256 i = 0; i < LoanUserList.length; i++) {
+            if (LoanUserList[i] == _user) {
+                alreadyIn = true;
+            }
+        }
+
+        if (alreadyIn == false) {
+            LoanUserList.push(_user);
         }
     }
 
-    function checkUsdtEnoughLiquidity(uint256 _amount)
-        public
-        view
-        returns (bool)
-    {
-        if (_amount > usdtTotalLiquidity) {
-            return false;
-        } else {
-            return true;
-        }
+    /**
+     * @dev set price oracle of the lending pool. only owner can set the price oracle.
+     * @param _oracle the price oracle which will get asset price to the lending pool contract
+     */
+    function setPriceOracle(PriceConsumerV3 _oracle) external onlyOwner {
+        priceOracle = _oracle;
+        emit PriceOracleUpdated(address(_oracle));
     }
 
-    function checkWbtcEnoughLiquidity(uint256 _amount)
-        public
-        view
-        returns (bool)
-    {
-        if (_amount > wbtcTotalLiquidity) {
-            return false;
-        } else {
-            return true;
+    /**
+     * @dev get the ether amount as collateral for specific token
+     * @param lnAmount the amount token for loan
+     * @param mtype the type token for loan
+     * @param ctype the type token for loan
+     */
+    function collateralAmount(
+        uint256 lnAmount,
+        uint256 mtype,
+        uint256 ctype
+    ) public view returns (uint256) {
+        // collateral amount = loan amount / LTV * 100
+        uint256 result;
+        uint256 priceCollateralToken = getTokenPriceInUSD(ctype);
+        uint256 priceLoanToken = getTokenPriceInUSD(mtype);
+        if (mtype == 2) {
+            result = lnAmount.wadDiv(usdcLTV).mul(100);
+        } else if (mtype == 3) {
+            result = lnAmount.wadDiv(usdtLTV).mul(100);
+        } else if (mtype == 4) {
+            result = lnAmount.wadDiv(btcLTV).mul(100);
         }
+        result = result.mul(priceLoanToken).div(priceCollateralToken);
+        return result;
     }
 
-    function loanEther(uint256 _amount, uint256 _duration) public {
+    /**
+     * @dev get the price of tokens from chainlink
+     * @param mtype the type token to get price
+     */
+    function getTokenPriceInUSD(uint256 mtype) public view returns (uint256) {
         require(
-            _amount >= ethPerOdon,
-            "loanEther: Not enough fund in order to loan"
+            address(priceOracle) != address(0),
+            "price oracle isn't initialized"
         );
+        uint256 tokenPrice;
+        if (mtype == 2) {
+            tokenPrice =uint256(priceOracle.getUSDCLatestPrice());
+        } else if (mtype == 3) {
+            tokenPrice =uint256(priceOracle.getUSDTLatestPrice());
+        } else if (mtype == 4) {
+             tokenPrice =uint256(priceOracle.getBTCLatestPrice());
+        } else if (mtype == 5) {
+            tokenPrice = odonPrice;
+        }
+        require(tokenPrice > 0, "token price isn't correct");
+        return tokenPrice;
+    }
+
+    /**
+     * @dev get the token amount from collateral for loan
+     * @param colAmount the amount of ether as collatera
+     * @param mtype the type token for loan
+     * @param ctype the type token for loan
+     */
+    function loanAmount(
+        uint256 colAmount,
+        uint256 mtype,
+        uint256 ctype
+    ) public view returns (uint256) {
+        // loan amount = collateral amount * LTV / 100
+        uint256 result;
+        uint256 priceCollateralToken = getTokenPriceInUSD(ctype);
+        uint256 priceLoanToken = getTokenPriceInUSD(mtype);
+        if (mtype == 2) {
+            result = colAmount.wadMul(usdcLTV).div(100);
+        } else if (mtype == 3) {
+            result = colAmount.wadMul(usdtLTV).div(100);
+        } else if (mtype == 4) {
+            result = colAmount.wadMul(btcLTV).div(100);
+        }
+        result = result.mul(priceCollateralToken).div(priceLoanToken);
+        return result;
+    }
+
+    /**
+     * @dev check the liquidity
+     * @param _amount the amount of tokens
+     * @param mtype the type token for loan
+     */
+    function checkEnoughLiquidity(uint256 _amount, uint256 mtype)
+        public
+        view
+        returns (bool)
+    {
+        uint256 total;
+        if (mtype == 1) {
+            total = totalLiquidity;
+        } else if (mtype == 2) {
+            total = usdcTotalLiquidity;
+        } else if (mtype == 3) {
+            total = usdtTotalLiquidity;
+        } else if (mtype == 4) {
+            total = btcTotalLiquidity;
+        } else if (mtype == 5) {
+            total = odonTotalLiquidity;
+        }
+        if (_amount > total) {
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    /**
+     * @dev loan the specific amount of tokens
+     * @param _amount the amount of tokens
+     * @param _duration the timeline
+     * @param mtype the type of token to loan
+     * @param ctype the type of token as collateral
+     */
+    function loan(
+        uint256 _amount,
+        uint256 _duration,
+        uint256 mtype,
+        uint256 ctype
+    ) public {
         require(
-            checkEtherEnoughLiquidity(_amount),
+            checkEnoughLiquidity(_amount, mtype),
             "loanEther: not enough liquidity"
         );
         LoanRequest memory newLoan;
         newLoan.borrower = msg.sender;
-        newLoan.loanAmountEther = _amount;
-        newLoan.loanAmountUsdc = 0;
-        newLoan.loanAmountUsdt = 0;
-        newLoan.loanAmountWbtc = 0;
-        newLoan.collateralAmount = etherCollateralAmount(_amount) * (10**18);
+        newLoan.loanAmount = _amount;
+        newLoan.collateralAmount = collateralAmount(_amount, mtype, ctype);
         newLoan.loanId = userLoansCount[msg.sender];
         newLoan.isPayback = false;
-        newLoan.isLoanEther = true;
-        newLoan.isLoanUsdc = false;
-        newLoan.isLoanUsdt = false;
-        newLoan.isLoanWbtc = false;
-
-        if (_duration == 7) {
-            // 6% interest
-            newLoan.paybackAmountEther = _amount.mul(106).div(100);
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 7 days;
-            newLoan.duration = 7 days;
-        } else if (_duration == 14) {
-            // 7% interest
-            newLoan.paybackAmountEther = _amount.mul(107).div(100);
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 14 days;
-            newLoan.duration = 14 days;
-        } else if (_duration == 30) {
-            // 8% interest
-            newLoan.paybackAmountEther = _amount.mul(108).div(100);
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 30 days;
-            newLoan.duration = 30 days;
-        } else {
-            revert("loanEther: no valid duration!");
+        newLoan.isLiquidate = false;
+        newLoan.mtype = mtype;
+        newLoan.ctype = ctype;
+        uint256 borrowAPY;
+        if (mtype == 2) {
+            borrowAPY = usdcBorrowAPY;
+        } else if (mtype == 3) {
+            borrowAPY = usdtBorrowAPY;
+        } else if (mtype == 4) {
+            borrowAPY = wbtcBorrowAPY;
         }
-        require(
-            IERC20(odonAddress).transferFrom(
-                msg.sender,
+        if (loanModeFirst) {
+            if (_duration == 7) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 7 days;
+                newLoan.duration = 7 days;
+            } else if (_duration == 14) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(firstAddAPY + borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 14 days;
+                newLoan.duration = 14 days;
+            } else if (_duration == 30) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(secondAddAPY + borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 30 days;
+                newLoan.duration = 30 days;
+            } else {
+                revert("loanToken: no valid duration!");
+            }
+        } else {
+            if (_duration == 30) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 30 days;
+                newLoan.duration = 30 days;
+            } else if (_duration == 60) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(firstAddAPY + borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 60 days;
+                newLoan.duration = 60 days;
+            } else if (_duration == 90) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(secondAddAPY + borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 90 days;
+                newLoan.duration = 90 days;
+            } else {
+                revert("loanToken: no valid duration!");
+            }
+        }
+        address collateralAddress;
+        if (ctype != 1) {
+            collateralAddress = odonAddress;
+            require(
+                ERC20(collateralAddress).transferFrom(
+                    msg.sender,
+                    address(this),
+                    newLoan.collateralAmount
+                ),
+                "loanToken: Transfer token from contract to user failed"
+            );
+            ERC20(collateralAddress).increaseAllowance(
                 address(this),
                 newLoan.collateralAmount
-            ),
-            "loanEther: Transfer token from user to contract failed"
-        );
-        payable(msg.sender).transfer(_amount);
-        IERC20(odonAddress).increaseAllowance(
-            address(this),
-            newLoan.collateralAmount
-        );
-        loans[msg.sender][userLoansCount[msg.sender]] = newLoan;
-        loanCount++;
-        userLoansCount[msg.sender]++;
-        totalLiquidity = totalLiquidity.sub(_amount);
-        emit NewLoan(
-            msg.sender,
-            newLoan.loanAmountEther,
-            newLoan.loanAmountUsdc,
-            newLoan.loanAmountUsdt,
-            newLoan.loanAmountWbtc,
-            newLoan.collateralAmount,
-            newLoan.paybackAmountEther,
-            newLoan.paybackAmountUsdc,
-            newLoan.paybackAmountUsdt,
-            newLoan.paybackAmountWbtc,
-            newLoan.loanDueDate,
-            newLoan.duration,
-            newLoan.isLoanEther,
-            newLoan.isLoanUsdc,
-            newLoan.isLoanUsdt,
-            newLoan.isLoanWbtc
-        );
-    }
-
-    function loanUsdc(uint256 _amount, uint256 _duration) public {
-        require(
-            _amount >= usdcPerOdon,
-            "loanUsdc: Not enough fund in order to loan"
-        );
-        require(
-            checkUsdcEnoughLiquidity(_amount),
-            "loanUsdc: not enough liquidity"
-        );
-        LoanRequest memory newLoan;
-        newLoan.borrower = msg.sender;
-        newLoan.loanAmountEther = 0;
-        newLoan.loanAmountUsdc = _amount;
-        newLoan.loanAmountUsdt = 0;
-        newLoan.loanAmountWbtc = 0;
-        newLoan.collateralAmount = usdcCollateralAmount(_amount) * (10**18);
-        newLoan.loanId = userLoansCount[msg.sender];
-        newLoan.isPayback = false;
-        newLoan.isLoanEther = false;
-        newLoan.isLoanUsdc = true;
-        newLoan.isLoanUsdt = false;
-        newLoan.isLoanWbtc = false;
-
-        if (_duration == 7) {
-            // 6% interest
-            newLoan.paybackAmountUsdc = _amount.mul(106).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 7 days;
-            newLoan.duration = 7 days;
-        } else if (_duration == 14) {
-            // 7% interest
-            newLoan.paybackAmountUsdc = _amount.mul(107).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 14 days;
-            newLoan.duration = 14 days;
-        } else if (_duration == 30) {
-            // 8% interest
-            newLoan.paybackAmountUsdc = _amount.mul(108).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 30 days;
-            newLoan.duration = 30 days;
+            );
+        }
+        if (ctype == 1) {
+            // totalLiquidity = totalLiquidity.add(msg.value);
         } else {
-            revert("loanUsdc: no valid duration!");
+            odonTotalLiquidity = odonTotalLiquidity.add(
+                newLoan.collateralAmount
+            );
+        }
+        address tokenAddress;
+        if (mtype == 2) {
+            tokenAddress = usdcAddress;
+        } else if (mtype == 3) {
+            tokenAddress = usdtAddress;
+        } else if (mtype == 4) {
+            tokenAddress = btcAddress;
         }
         require(
-            IERC20(odonAddress).transferFrom(
-                msg.sender,
-                address(this),
-                newLoan.collateralAmount
-            ),
-            "loanUsdc: Transfer token from user to contract failed"
-        );
-        require(
-            IERC20(usdcAddress).transferFrom(
+            ERC20(tokenAddress).transferFrom(
                 address(this),
                 msg.sender,
                 _amount
             ),
-            "loanUsdc: Transfer token from contract to user failed"
+            "loanToken: Transfer token from contract to user failed"
         );
-        IERC20(usdcAddress).increaseAllowance(msg.sender, _amount);
-        IERC20(odonAddress).increaseAllowance(
-            address(this),
-            newLoan.collateralAmount
-        );
+        if (mtype == 2) {
+            usdcTotalLiquidity = usdcTotalLiquidity.sub(_amount);
+        } else if (mtype == 3) {
+            usdtTotalLiquidity = usdtTotalLiquidity.sub(_amount);
+        } else if (mtype == 4) {
+            btcTotalLiquidity = btcTotalLiquidity.sub(_amount);
+        }
         loans[msg.sender][userLoansCount[msg.sender]] = newLoan;
         loanCount++;
         userLoansCount[msg.sender]++;
-        totalLiquidity = totalLiquidity.sub(_amount);
         emit NewLoan(
             msg.sender,
-            newLoan.loanAmountEther,
-            newLoan.loanAmountUsdc,
-            newLoan.loanAmountUsdt,
-            newLoan.loanAmountWbtc,
+            newLoan.loanAmount,
             newLoan.collateralAmount,
-            newLoan.paybackAmountEther,
-            newLoan.paybackAmountUsdc,
-            newLoan.paybackAmountUsdt,
-            newLoan.paybackAmountWbtc,
+            newLoan.paybackAmount,
             newLoan.loanDueDate,
             newLoan.duration,
-            newLoan.isLoanEther,
-            newLoan.isLoanUsdc,
-            newLoan.isLoanUsdt,
-            newLoan.isLoanWbtc
+            newLoan.mtype,
+            newLoan.ctype
         );
     }
 
-    function loanUsdt(uint256 _amount, uint256 _duration) public {
-        require(
-            _amount >= usdtPerOdon,
-            "loanUsdt: Not enough fund in order to loan"
-        );
-        require(
-            checkUsdtEnoughLiquidity(_amount),
-            "loanUsdt: not enough liquidity"
-        );
-        LoanRequest memory newLoan;
-        newLoan.borrower = msg.sender;
-        newLoan.loanAmountEther = 0;
-        newLoan.loanAmountUsdt = _amount;
-        newLoan.loanAmountUsdc = 0;
-        newLoan.loanAmountWbtc = 0;
-        newLoan.collateralAmount = usdcCollateralAmount(_amount) * (10**18);
-        newLoan.loanId = userLoansCount[msg.sender];
-        newLoan.isPayback = false;
-        newLoan.isLoanEther = false;
-        newLoan.isLoanUsdt = true;
-        newLoan.isLoanUsdc = false;
-        newLoan.isLoanWbtc = false;
-
-        if (_duration == 7) {
-            // 6% interest
-            newLoan.paybackAmountUsdt = _amount.mul(106).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 7 days;
-            newLoan.duration = 7 days;
-        } else if (_duration == 14) {
-            // 7% interest
-            newLoan.paybackAmountUsdt = _amount.mul(107).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 14 days;
-            newLoan.duration = 14 days;
-        } else if (_duration == 30) {
-            // 8% interest
-            newLoan.paybackAmountUsdt = _amount.mul(108).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountWbtc = 0;
-            newLoan.loanDueDate = block.timestamp + 30 days;
-            newLoan.duration = 30 days;
-        } else {
-            revert("loanUsdt: no valid duration!");
+    /**
+     * @dev lend the specific amount of tokens
+     * @param _amount the amount of tokens
+     * @param mtype the type token for loan
+     */
+    function lendToken(uint256 _amount, uint256 mtype) public {
+        address tokenAddress;
+        if (mtype == 2) {
+            tokenAddress = usdcAddress;
+        } else if (mtype == 3) {
+            tokenAddress = usdtAddress;
+        } else if (mtype == 4) {
+            tokenAddress = btcAddress;
         }
         require(
-            IERC20(odonAddress).transferFrom(
-                msg.sender,
-                address(this),
-                newLoan.collateralAmount
-            ),
-            "loanUsdc: Transfer token from user to contract failed"
-        );
-        require(
-            IERC20(usdtAddress).transferFrom(
-                address(this),
-                msg.sender,
-                _amount
-            ),
-            "loanUsdt: Transfer token from contract to user failed"
-        );
-        IERC20(usdtAddress).increaseAllowance(msg.sender, _amount);
-        IERC20(odonAddress).increaseAllowance(
-            address(this),
-            newLoan.collateralAmount
-        );
-        loans[msg.sender][userLoansCount[msg.sender]] = newLoan;
-        loanCount++;
-        userLoansCount[msg.sender]++;
-        totalLiquidity = totalLiquidity.sub(_amount);
-        emit NewLoan(
-            msg.sender,
-            newLoan.loanAmountEther,
-            newLoan.loanAmountUsdc,
-            newLoan.loanAmountUsdt,
-            newLoan.loanAmountWbtc,
-            newLoan.collateralAmount,
-            newLoan.paybackAmountEther,
-            newLoan.paybackAmountUsdc,
-            newLoan.paybackAmountUsdt,
-            newLoan.paybackAmountWbtc,
-            newLoan.loanDueDate,
-            newLoan.duration,
-            newLoan.isLoanEther,
-            newLoan.isLoanUsdc,
-            newLoan.isLoanUsdt,
-            newLoan.isLoanWbtc
-        );
-    }
-
-    function loanWbtc(uint256 _amount, uint256 _duration) public {
-        require(
-            _amount >= wbtcPerOdon,
-            "loanWbtc: Not enough fund in order to loan"
-        );
-        require(
-            checkUsdtEnoughLiquidity(_amount),
-            "loanWbtc: not enough liquidity"
-        );
-        LoanRequest memory newLoan;
-        newLoan.borrower = msg.sender;
-        newLoan.loanAmountEther = 0;
-        newLoan.loanAmountUsdt = 0;
-        newLoan.loanAmountUsdc = 0;
-        newLoan.loanAmountWbtc = _amount;
-        newLoan.collateralAmount = usdcCollateralAmount(_amount) * (10**18);
-        newLoan.loanId = userLoansCount[msg.sender];
-        newLoan.isPayback = false;
-        newLoan.isLoanEther = false;
-        newLoan.isLoanUsdt = false;
-        newLoan.isLoanUsdc = false;
-        newLoan.isLoanWbtc = true;
-
-        if (_duration == 7) {
-            // 6% interest
-            newLoan.paybackAmountWbtc = _amount.mul(106).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.loanDueDate = block.timestamp + 7 days;
-            newLoan.duration = 7 days;
-        } else if (_duration == 14) {
-            // 7% interest
-            newLoan.paybackAmountWbtc = _amount.mul(107).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.loanDueDate = block.timestamp + 14 days;
-            newLoan.duration = 14 days;
-        } else if (_duration == 30) {
-            // 8% interest
-            newLoan.paybackAmountWbtc = _amount.mul(108).div(100);
-            newLoan.paybackAmountEther = 0;
-            newLoan.paybackAmountUsdc = 0;
-            newLoan.paybackAmountUsdt = 0;
-            newLoan.loanDueDate = block.timestamp + 30 days;
-            newLoan.duration = 30 days;
-        } else {
-            revert("loanWbtc: no valid duration!");
-        }
-        require(
-            IERC20(odonAddress).transferFrom(
-                msg.sender,
-                address(this),
-                newLoan.collateralAmount
-            ),
-            "loanWbtc: Transfer token from user to contract failed"
-        );
-        require(
-            IERC20(usdtAddress).transferFrom(
-                address(this),
-                msg.sender,
-                _amount
-            ),
-            "loanWbtc: Transfer token from contract to user failed"
-        );
-        IERC20(wbtcAddress).increaseAllowance(msg.sender, _amount);
-        IERC20(odonAddress).increaseAllowance(
-            address(this),
-            newLoan.collateralAmount
-        );
-        loans[msg.sender][userLoansCount[msg.sender]] = newLoan;
-        loanCount++;
-        userLoansCount[msg.sender]++;
-        totalLiquidity = totalLiquidity.sub(_amount);
-        emit NewLoan(
-            msg.sender,
-            newLoan.loanAmountEther,
-            newLoan.loanAmountUsdc,
-            newLoan.loanAmountUsdt,
-            newLoan.loanAmountWbtc,
-            newLoan.collateralAmount,
-            newLoan.paybackAmountEther,
-            newLoan.paybackAmountUsdc,
-            newLoan.paybackAmountUsdt,
-            newLoan.paybackAmountWbtc,
-            newLoan.loanDueDate,
-            newLoan.duration,
-            newLoan.isLoanEther,
-            newLoan.isLoanUsdc,
-            newLoan.isLoanUsdt,
-            newLoan.isLoanWbtc
-        );
-    }
-
-    function lendEther() public payable {
-        require(msg.value >= 0.0001 ether);
-        LendRequest memory request;
-        request.lender = msg.sender;
-        request.lendId = userLendsCount[msg.sender];
-        request.lendAmountEther = msg.value;
-        request.lendAmountUsdc = 0;
-        request.lendAmountUsdt = 0;
-        request.lendAmountWbtc = 0;
-        // 5% interest
-        request.paybackAmountEther = msg.value.mul(105).div(100);
-        request.paybackAmountUsdc = 0;
-        request.paybackAmountUsdt = 0;
-        request.paybackAmountWbtc = 0;
-        request.timeLend = block.timestamp;
-        request.timeCanGetInterest = block.timestamp + 30 days;
-        request.retrieved = false;
-        request.isLendEther = true;
-        request.isLendUsdc = false;
-        request.isLendUsdt = false;
-        request.isLendWbtc = false;
-        lends[msg.sender][userLendsCount[msg.sender]] = request;
-        lendCount++;
-        userLendsCount[msg.sender]++;
-        totalLiquidity = totalLiquidity.add(msg.value);
-        emit NewLend(
-            request.lender,
-            request.lendAmountEther,
-            request.lendAmountUsdc,
-            request.lendAmountUsdt,
-            request.lendAmountWbtc,
-            request.paybackAmountEther,
-            request.paybackAmountUsdc,
-            request.paybackAmountUsdt,
-            request.paybackAmountWbtc,
-            request.timeLend,
-            request.timeCanGetInterest,
-            request.retrieved,
-            request.isLendEther,
-            request.isLendUsdc,
-            request.isLendUsdt,
-            request.isLendWbtc
-        );
-    }
-
-    function lendUsdc(uint256 _amount) public {
-        require(
-            IERC20(usdcAddress).transferFrom(
+            ERC20(tokenAddress).transferFrom(
                 msg.sender,
                 address(this),
                 _amount
             ),
-            "lendUsdc: Transfer token from user to contract failed"
+            "lendToken: Transfer token from user to contract failed"
         );
         LendRequest memory request;
         request.lender = msg.sender;
         request.lendId = userLendsCount[msg.sender];
-        request.lendAmountEther = 0;
-        request.lendAmountUsdc = _amount;
-        request.lendAmountUsdt = 0;
-        request.lendAmountWbtc = 0;
+        request.lendAmount = _amount;
         // 5% interest
-        request.paybackAmountEther = 0;
-        request.paybackAmountWbtc = 0;
-        request.paybackAmountUsdt = 0;
-        request.paybackAmountUsdc = _amount.mul(105).div(100);
+        if (mtype == 2) {
+            request.paybackAmount = _amount.add(
+                _amount.wadMul(usdcLendAPY).div(100)
+            );
+        } else if (mtype == 3) {
+            request.paybackAmount = _amount.add(
+                _amount.wadMul(usdtLendAPY).div(100)
+            );
+        } else if (mtype == 4) {
+            request.paybackAmount = _amount.add(
+                _amount.wadMul(wbtcLendAPY).div(100)
+            );
+        }
         request.timeLend = block.timestamp;
         request.timeCanGetInterest = block.timestamp + 30 days;
         request.retrieved = false;
-        request.isLendEther = false;
-        request.isLendUsdc = true;
-        request.isLendUsdt = false;
-        request.isLendWbtc = false;
+        request.mtype = mtype;
         lends[msg.sender][userLendsCount[msg.sender]] = request;
         lendCount++;
         userLendsCount[msg.sender]++;
-        IERC20(usdcAddress).increaseAllowance(
-            address(this),
-            request.paybackAmountUsdc
-        );
+
+        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        if (mtype == 2) {
+            usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
+        } else if (mtype == 3) {
+            usdtTotalLiquidity = usdtTotalLiquidity.add(_amount);
+        }
+        if (mtype == 4) {
+            btcTotalLiquidity = btcTotalLiquidity.add(_amount);
+        }
+        addUserToLendUserList(msg.sender);
         emit NewLend(
             request.lender,
-            request.lendAmountEther,
-            request.lendAmountUsdc,
-            request.lendAmountUsdt,
-            request.lendAmountWbtc,
-            request.paybackAmountEther,
-            request.paybackAmountUsdc,
-            request.paybackAmountUsdt,
-            request.paybackAmountWbtc,
+            request.lendAmount,
+            request.paybackAmount,
             request.timeLend,
             request.timeCanGetInterest,
             request.retrieved,
-            request.isLendEther,
-            request.isLendUsdc,
-            request.isLendUsdt,
-            request.isLendWbtc
+            request.mtype
         );
     }
 
-    function lendUsdt(uint256 _amount) public {
+    /**
+     * @dev get the LTV of specific loan
+     * @param _borrower the id of loan
+     * @param _id the id of loan
+     */
+    function getLoansLTV(address _borrower, uint256 _id)
+        public
+        view
+        returns (uint256)
+    {
+        LoanRequest storage loanReq = loans[_borrower][_id];
+        uint256 loanLTV;
         require(
-            IERC20(usdtAddress).transferFrom(
-                msg.sender,
+            address(priceOracle) != address(0),
+            "price oracle isn't initialized"
+        );
+        uint256 priceCollateralToken = getTokenPriceInUSD(loanReq.ctype);
+        require(priceCollateralToken > 0, "ether price isn't correct");
+        uint256 priceLoanToken = getTokenPriceInUSD(loanReq.mtype);
+        require(priceLoanToken > 0, "token price isn't correct");
+        uint256 totalLoanPrice = loanReq.paybackAmount.wadMul(priceLoanToken);
+        uint256 totalCollateralPrice = loanReq.collateralAmount.wadMul(
+            priceCollateralToken
+        );
+        loanLTV = totalLoanPrice.wadDiv(totalCollateralPrice).mul(100);
+        return loanLTV;
+    }
+
+    /**
+     * @dev get the total liquidity in usd
+     * @param mtype the type of liquidity
+     */
+    function getTotalLiquidityInUSD(uint256 mtype)
+        public
+        view
+        returns (uint256)
+    {
+        uint256 totalPrice;
+        require(
+            address(priceOracle) != address(0),
+            "price oracle isn't initialized"
+        );
+
+        if (mtype == 1) {
+            totalPrice = totalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+        } else if (mtype == 2) {
+            totalPrice = usdcTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+        } else if (mtype == 3) {
+            totalPrice = usdtTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+        } else if (mtype == 4) {
+            totalPrice = btcTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+        } else if (mtype == 5) {
+            totalPrice = odonTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+        }
+        return totalPrice;
+    }
+
+    /**
+     * @dev check the health of loan
+     * @param _borrower the id of loan
+     * @param _id the id of loan
+     */
+    function checkLoanHealth(address _borrower, uint256 _id)
+        public
+        view
+        returns (bool)
+    {
+        bool isheath = true;
+
+        if (getLoansLTV(_borrower, _id) >= dangerousLTV) {
+            isheath = false;
+        }
+
+        return isheath;
+    }
+
+    /**
+     * @dev check the expire of loan
+     * @param _id the id of loan
+     */
+    function checkLoanExpire(address borrower, uint256 _id)
+        public
+        view
+        returns (bool)
+    {
+        LoanRequest storage loanReq = loans[borrower][_id];
+        bool expired = false;
+
+        if (block.timestamp > loanReq.loanDueDate) {
+            expired = true;
+        }
+
+        return expired;
+    }
+
+    /**
+     * @dev liquidate the unhealthed loans
+     * @param _borrower the address of borrower
+     * @param _id the id of loan
+     */
+    function liquidate(address _borrower, uint256 _id) external onlyOwner {
+        // LendRequest memory
+        LoanRequest storage loanReq = loans[_borrower][_id];
+        require(!loanReq.isPayback, "payback: payback already");
+        require(
+            checkLoanHealth(_borrower, _id) == false,
+            "withdrawEther: Loan health is true"
+        );
+        require(
+            checkEnoughLiquidity(loanReq.collateralAmount, loanReq.ctype),
+            "withDrawEther: not enough liquidity"
+        );
+        address collateralAddress;
+
+        if (loanReq.ctype == 2) {
+            collateralAddress = movrAddress;
+        } else {
+            collateralAddress = odonAddress;
+        }
+
+        ERC20(collateralAddress).transferFrom(
+            address(this),
+            msg.sender,
+            loanReq.collateralAmount
+        );
+        ERC20(collateralAddress).increaseAllowance(
+            address(this),
+            loanReq.collateralAmount
+        );
+        if (loanReq.ctype == 1) {
+            totalLiquidity = totalLiquidity.sub(loanReq.collateralAmount);
+        } else {
+            odonTotalLiquidity = odonTotalLiquidity.sub(
+                loanReq.collateralAmount
+            );
+        }
+        loanReq.isPayback = false;
+        loanReq.isLiquidate = true;
+        emit Liquidate(msg.sender, loanReq.collateralAmount, loanReq.ctype);
+    }
+
+    /**
+     * @dev emitted on withDrawReserve
+     * @param _amount the amount of token to withdraw
+     * @param mtype the type of the token
+     */
+    function withDrawReserve(uint256 _amount, uint256 mtype)
+        external
+        onlyOwner
+    {
+        require(
+            checkEnoughLiquidity(_amount, mtype),
+            "withDrawEther: not enough liquidity"
+        );
+        address tokenAddress;
+        if (mtype == 1) {
+            tokenAddress = movrAddress;
+        }
+        if (mtype == 2) {
+            tokenAddress = usdcAddress;
+        } else if (mtype == 3) {
+            tokenAddress = usdtAddress;
+        } else if (mtype == 4) {
+            tokenAddress = btcAddress;
+        } else if (mtype == 4) {
+            tokenAddress = odonAddress;
+        }
+
+        require(
+            ERC20(tokenAddress).transferFrom(
                 address(this),
+                msg.sender,
                 _amount
             ),
-            "lendUsdc: Transfer token from user to contract failed"
+            "Transaction failed on init function"
         );
-        LendRequest memory request;
-        request.lender = msg.sender;
-        request.lendId = userLendsCount[msg.sender];
-        request.lendAmountEther = 0;
-        request.lendAmountUsdt = _amount;
-        request.lendAmountUsdc = 0;
-        request.lendAmountWbtc = 0;
-        // 5% interest
-        request.paybackAmountEther = 0;
-        request.paybackAmountWbtc = 0;
-        request.paybackAmountUsdc = 0;
-        request.paybackAmountUsdt = _amount.mul(105).div(100);
-        request.timeLend = block.timestamp;
-        request.timeCanGetInterest = block.timestamp + 30 days;
-        request.retrieved = false;
-        request.isLendEther = false;
-        request.isLendUsdc = false;
-        request.isLendUsdt = true;
-        request.isLendWbtc = false;
-        lends[msg.sender][userLendsCount[msg.sender]] = request;
-        lendCount++;
-        userLendsCount[msg.sender]++;
-        IERC20(usdtAddress).increaseAllowance(
-            address(this),
-            request.paybackAmountUsdt
-        );
-        emit NewLend(
-            request.lender,
-            request.lendAmountEther,
-            request.lendAmountUsdc,
-            request.lendAmountUsdt,
-            request.lendAmountWbtc,
-            request.paybackAmountEther,
-            request.paybackAmountUsdc,
-            request.paybackAmountUsdt,
-            request.paybackAmountWbtc,
-            request.timeLend,
-            request.timeCanGetInterest,
-            request.retrieved,
-            request.isLendEther,
-            request.isLendUsdc,
-            request.isLendUsdt,
-            request.isLendWbtc
-        );
+
+        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+
+        if (mtype == 1) {
+            totalLiquidity = totalLiquidity.add(_amount);
+        } else if (mtype == 2) {
+            usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
+        } else if (mtype == 3) {
+            usdcTotalLiquidity = usdtTotalLiquidity.add(_amount);
+        } else if (mtype == 4) {
+            usdcTotalLiquidity = btcTotalLiquidity.add(_amount);
+        } else if (mtype == 5) {
+            usdcTotalLiquidity = odonTotalLiquidity.add(_amount);
+        }
     }
 
-    function lendWbtc(uint256 _amount) public {
-        require(
-            IERC20(wbtcAddress).transferFrom(
-                msg.sender,
-                address(this),
-                _amount
-            ),
-            "lendUsdc: Transfer token from user to contract failed"
-        );
-        LendRequest memory request;
-        request.lender = msg.sender;
-        request.lendId = userLendsCount[msg.sender];
-        request.lendAmountEther = 0;
-        request.lendAmountWbtc = _amount;
-        request.lendAmountUsdt = 0;
-        request.lendAmountUsdc = 0;
-        // 5% interest
-        request.paybackAmountEther = 0;
-        request.paybackAmountUsdc = 0;
-        request.paybackAmountUsdt = 0;
-        request.paybackAmountWbtc = _amount.mul(105).div(100);
-        request.timeLend = block.timestamp;
-        request.timeCanGetInterest = block.timestamp + 30 days;
-        request.retrieved = false;
-        request.isLendEther = false;
-        request.isLendUsdc = false;
-        request.isLendUsdt = false;
-        request.isLendWbtc = true;
-        lends[msg.sender][userLendsCount[msg.sender]] = request;
-        lendCount++;
-        userLendsCount[msg.sender]++;
-        IERC20(wbtcAddress).increaseAllowance(
-            address(this),
-            request.paybackAmountWbtc
-        );
-        emit NewLend(
-            request.lender,
-            request.lendAmountEther,
-            request.lendAmountUsdc,
-            request.lendAmountUsdt,
-            request.lendAmountWbtc,
-            request.paybackAmountEther,
-            request.paybackAmountUsdc,
-            request.paybackAmountUsdt,
-            request.paybackAmountWbtc,
-            request.timeLend,
-            request.timeCanGetInterest,
-            request.retrieved,
-            request.isLendEther,
-            request.isLendUsdc,
-            request.isLendUsdt,
-            request.isLendWbtc
-        );
-    }
-
-    function withdraw(uint256 _id) public {
+    /**
+     * @dev withdraw the loans
+     * @param _id the id of loan
+     */
+    function withdraw(uint256 _id) external {
         // LendRequest memory
         LendRequest storage req = lends[msg.sender][_id];
-        require(req.lendId >= 0, "withdrawEther: Lend request not valid");
+        require(req.lendId >= 0, "withdrawToken: Lend request not valid");
         require(
             req.retrieved == false,
-            "withdrawEther: Lend request retrieved"
+            "withdrawToken: Lend request retrieved"
         );
         require(
             req.lender == msg.sender,
             "withdrawEther: Only lender can withdraw"
         );
+        require(
+            checkEnoughLiquidity(req.lendAmount, req.mtype),
+            "withDrawEther: not enough liquidity"
+        );
         req.retrieved = true;
         if (block.timestamp > req.timeCanGetInterest) {
-            // can get interest
-            if (req.isLendEther) {
-                // transfer ether to lender
-                payable(req.lender).transfer(req.paybackAmountEther);
-                emit Withdraw(
-                    true,
-                    true,
-                    false,
-                    false,
-                    false,
-                    req.paybackAmountEther
-                );
-            } else if (req.isLendUsdc) {
-                // transfer token to lender
-                IERC20(usdcAddress).transferFrom(
-                    address(this),
-                    req.lender,
-                    req.paybackAmountUsdc
-                );
-                emit Withdraw(
-                    true,
-                    false,
-                    true,
-                    false,
-                    false,
-                    req.paybackAmountUsdc
-                );
-            } else if (req.isLendUsdt) {
-                // transfer token to lender
-                IERC20(usdtAddress).transferFrom(
-                    address(this),
-                    req.lender,
-                    req.paybackAmountUsdt
-                );
-                emit Withdraw(
-                    true,
-                    false,
-                    false,
-                    true,
-                    false,
-                    req.paybackAmountUsdt
-                );
-            } else if (req.isLendWbtc) {
-                // transfer token to lender
-                IERC20(wbtcAddress).transferFrom(
-                    address(this),
-                    req.lender,
-                    req.paybackAmountWbtc
-                );
-                emit Withdraw(
-                    true,
-                    false,
-                    false,
-                    false,
-                    true,
-                    req.paybackAmountWbtc
-                );
+            address tokenAddress;
+            if (req.mtype == 2) {
+                tokenAddress = usdcAddress;
+            } else if (req.mtype == 3) {
+                tokenAddress = usdtAddress;
+            } else if (req.mtype == 4) {
+                tokenAddress = btcAddress;
             }
+            ERC20(tokenAddress).transferFrom(
+                address(this),
+                req.lender,
+                req.paybackAmount
+            );
+            ERC20(tokenAddress).increaseAllowance(
+                address(this),
+                req.paybackAmount
+            );
+            if (req.mtype == 2) {
+                usdcTotalLiquidity = usdcTotalLiquidity.sub(req.paybackAmount);
+            } else if (req.mtype == 3) {
+                usdtTotalLiquidity = usdtTotalLiquidity.sub(req.paybackAmount);
+            }
+            if (req.mtype == 4) {
+                btcTotalLiquidity = btcTotalLiquidity.sub(req.paybackAmount);
+            }
+            // transfer token to lender
+            emit Withdraw(true, req.paybackAmount, req.mtype);
         } else {
-            // transfer the original amount
-            if (req.isLendEther) {
-                // transfer ether to lender
-                payable(req.lender).transfer(req.lendAmountEther);
-                emit Withdraw(
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
-                    req.lendAmountEther
-                );
-            } else if (req.isLendUsdc) {
-                // transfer token to lender
-                IERC20(usdcAddress).transferFrom(
-                    address(this),
-                    req.lender,
-                    req.lendAmountUsdc
-                );
-                emit Withdraw(
-                    false,
-                    false,
-                    true,
-                    false,
-                    false,
-                    req.lendAmountUsdc
-                );
-            } else if (req.isLendUsdt) {
-                // transfer token to lender
-                IERC20(usdtAddress).transferFrom(
-                    address(this),
-                    req.lender,
-                    req.lendAmountUsdt
-                );
-                emit Withdraw(
-                    false,
-                    false,
-                    false,
-                    true,
-                    false,
-                    req.lendAmountUsdt
-                );
-            } else if (req.isLendWbtc) {
-                // transfer token to lender
-                IERC20(wbtcAddress).transferFrom(
-                    address(this),
-                    req.lender,
-                    req.lendAmountWbtc
-                );
-                emit Withdraw(
-                    false,
-                    false,
-                    false,
-                    false,
-                    true,
-                    req.lendAmountUsdt
-                );
+            address tokenAddress;
+            if (req.mtype == 2) {
+                tokenAddress = usdcAddress;
+            } else if (req.mtype == 3) {
+                tokenAddress = usdtAddress;
+            } else if (req.mtype == 4) {
+                tokenAddress = btcAddress;
             }
+            ERC20(tokenAddress).transferFrom(
+                address(this),
+                req.lender,
+                req.lendAmount
+            );
+            ERC20(tokenAddress).increaseAllowance(
+                address(this),
+                req.lendAmount
+            );
+            if (req.mtype == 2) {
+                usdcTotalLiquidity = usdcTotalLiquidity.sub(req.lendAmount);
+            } else if (req.mtype == 3) {
+                usdtTotalLiquidity = usdtTotalLiquidity.sub(req.lendAmount);
+            }
+            if (req.mtype == 4) {
+                btcTotalLiquidity = btcTotalLiquidity.sub(req.lendAmount);
+            }
+            // transfer token to lender
+            emit Withdraw(false, req.lendAmount, req.mtype);
         }
     }
 
-    function payback(uint256 _id) public payable {
+    /**
+     * @dev paybakc the loans
+     * @param _id the id of loan
+     * @param _amount the amount of token
+     */
+    function payback(uint256 _id, uint256 _amount) external {
         LoanRequest storage loanReq = loans[msg.sender][_id];
         require(
             loanReq.borrower == msg.sender,
@@ -1057,120 +922,100 @@ contract Loan {
             block.timestamp <= loanReq.loanDueDate,
             "payback: exceed due date"
         );
-        if (loanReq.isLoanEther) {
-            require(
-                msg.value >= loanReq.paybackAmountEther,
-                "payback: Not enough ether"
-            );
-            require(
-                IERC20(odonAddress).transferFrom(
-                    address(this),
-                    msg.sender,
-                    loanReq.collateralAmount
-                ),
-                "payback: Transfer collateral from contract to user failed"
-            );
+        require(
+            getLoansLTV(msg.sender, _id) < dangerousLTV,
+            "payback: LTV exceed dangerous LTV"
+        );
+        require(_amount >= loanReq.paybackAmount, "payback: Not enough token");
 
-            payable(address(this)).transfer(msg.value);
-            loanReq.isPayback = true;
-            emit PayBack(
+        require(
+            checkEnoughLiquidity(loanReq.collateralAmount, loanReq.ctype),
+            "payback: not enough liquidity on contract"
+        );
+        address tokenAddress;
+        if (loanReq.mtype == 2) {
+            tokenAddress = usdcAddress;
+        } else if (loanReq.mtype == 3) {
+            tokenAddress = usdtAddress;
+        } else if (loanReq.mtype == 4) {
+            tokenAddress = btcAddress;
+        }
+        require(
+            ERC20(tokenAddress).transferFrom(
                 msg.sender,
-                loanReq.isPayback,
-                true,
-                false,
-                false,
-                false,
-                block.timestamp,
-                loanReq.paybackAmountEther,
+                address(this),
+                _amount
+            ),
+            "payback: Transfer collateral from contract to user failed"
+        );
+        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+
+        if (loanReq.mtype == 2) {
+            usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
+        } else if (loanReq.mtype == 3) {
+            usdtTotalLiquidity = usdtTotalLiquidity.add(_amount);
+        } else if (loanReq.mtype == 4) {
+            btcTotalLiquidity = btcTotalLiquidity.add(_amount);
+        }
+        address collateralAddress;
+        if (loanReq.ctype == 1) {
+            collateralAddress = movrAddress;
+        } else {
+            collateralAddress = odonAddress;
+        }
+        require(
+            ERC20(collateralAddress).transferFrom(
+                address(this),
+                msg.sender,
+                loanReq.collateralAmount
+            ),
+            "payback: Transfer collateral from contract to user failed"
+        );
+        ERC20(collateralAddress).increaseAllowance(
+            address(this),
+            loanReq.collateralAmount
+        );
+        if (loanReq.ctype == 1) {
+            totalLiquidity = totalLiquidity.sub(loanReq.collateralAmount);
+        } else {
+            odonTotalLiquidity = odonTotalLiquidity.sub(
                 loanReq.collateralAmount
             );
         }
-        else if (loanReq.isLoanUsdc) {
-            require(
-                msg.value >= loanReq.paybackAmountUsdc,
-                "payback: Not enough usdc"
-            );
-            require(
-                IERC20(odonAddress).transferFrom(
-                    address(this),
-                    msg.sender,
-                    loanReq.collateralAmount
-                ),
-                "payback: Transfer collateral from contract to user failed"
-            );
 
-            payable(address(this)).transfer(msg.value);
-            loanReq.isPayback = true;
-            emit PayBack(
-                msg.sender,
-                loanReq.isPayback,
-                false,
-                true,
-                false,
-                false,
-                block.timestamp,
-                loanReq.paybackAmountEther,
-                loanReq.collateralAmount
-            );
-        }
-        else if (loanReq.isLoanUsdt) {
-            require(
-                msg.value >= loanReq.paybackAmountUsdt,
-                "payback: Not enough usdt"
-            );
-            require(
-                IERC20(odonAddress).transferFrom(
-                    address(this),
-                    msg.sender,
-                    loanReq.collateralAmount
-                ),
-                "payback: Transfer collateral from contract to user failed"
-            );
-
-            payable(address(this)).transfer(msg.value);
-            loanReq.isPayback = true;
-            emit PayBack(
-                msg.sender,
-                loanReq.isPayback,
-                false,
-                false,
-                true,
-                false,
-                block.timestamp,
-                loanReq.paybackAmountEther,
-                loanReq.collateralAmount
-            );
-        }
-        else if (loanReq.isLoanWbtc) {
-            require(
-                msg.value >= loanReq.paybackAmountUsdt,
-                "payback: Not enough wbtc"
-            );
-            require(
-                IERC20(odonAddress).transferFrom(
-                    address(this),
-                    msg.sender,
-                    loanReq.collateralAmount
-                ),
-                "payback: Transfer collateral from contract to user failed"
-            );
-
-            payable(address(this)).transfer(msg.value);
-            loanReq.isPayback = true;
-            emit PayBack(
-                msg.sender,
-                loanReq.isPayback,
-                false,
-                false,
-                false,
-                true,
-                block.timestamp,
-                loanReq.paybackAmountEther,
-                loanReq.collateralAmount
-            );
-        }
+        loanReq.isPayback = true;
+        loanReq.isLiquidate = false;
+        emit PayBack(
+            msg.sender,
+            loanReq.isPayback,
+            block.timestamp,
+            loanReq.paybackAmount,
+            loanReq.collateralAmount,
+            loanReq.mtype,
+            loanReq.ctype
+        );
     }
 
+    /**
+     * @dev get the all loans of user by admin
+     */
+    function getAllUserLoansByAdmin(address borrower)
+        public
+        view
+        returns (LoanRequest[] memory)
+    {
+        LoanRequest[] memory requests = new LoanRequest[](
+            userLoansCount[borrower]
+        );
+        for (uint256 i = 0; i < userLoansCount[borrower]; i++) {
+            requests[i] = loans[borrower][i];
+        }
+        return requests;
+    }
+
+    /**
+     * @dev get the all loans of user
+     */
     function getAllUserLoans() public view returns (LoanRequest[] memory) {
         LoanRequest[] memory requests = new LoanRequest[](
             userLoansCount[msg.sender]
@@ -1181,6 +1026,9 @@ contract Loan {
         return requests;
     }
 
+    /**
+     * @dev get the ongoing loans of user
+     */
     function getUserOngoingLoans() public view returns (LoanRequest[] memory) {
         LoanRequest[] memory ongoing = new LoanRequest[](
             userLoansCount[msg.sender]
@@ -1194,6 +1042,9 @@ contract Loan {
         return ongoing;
     }
 
+    /**
+     * @dev get the overdue loans of user
+     */
     function getUserOverdueLoans() public view returns (LoanRequest[] memory) {
         LoanRequest[] memory overdue = new LoanRequest[](
             userLoansCount[msg.sender]
@@ -1207,6 +1058,44 @@ contract Loan {
         return overdue;
     }
 
+    /**
+     * @dev get the unhealth loans of user
+     */
+    function getUserUnHealthLoans() public view returns (LoanRequest[] memory) {
+        LoanRequest[] memory unhealth = new LoanRequest[](
+            userLoansCount[msg.sender]
+        );
+        for (uint256 i = 0; i < userLoansCount[msg.sender]; i++) {
+            LoanRequest memory req = loans[msg.sender][i];
+            if (!req.isPayback && req.loanDueDate > block.timestamp) {
+                if (checkLoanHealth(msg.sender, i) == false) {
+                    unhealth[i] = req;
+                }
+            }
+        }
+        return unhealth;
+    }
+
+    /**
+     * @dev get the all lends of user by admin
+     */
+    function getUserAllLendsByAdmin(address lender)
+        public
+        view
+        returns (LendRequest[] memory)
+    {
+        LendRequest[] memory requests = new LendRequest[](
+            userLendsCount[lender]
+        );
+        for (uint256 i = 0; i < userLendsCount[lender]; i++) {
+            requests[i] = lends[lender][i];
+        }
+        return requests;
+    }
+
+    /**
+     * @dev get the all lends of user
+     */
     function getUserAllLends() public view returns (LendRequest[] memory) {
         LendRequest[] memory requests = new LendRequest[](
             userLendsCount[msg.sender]
@@ -1217,6 +1106,9 @@ contract Loan {
         return requests;
     }
 
+    /**
+     * @dev get the lends of user that not retrieved
+     */
     function getUserNotRetrieveLend()
         public
         view
@@ -1232,5 +1124,63 @@ contract Loan {
             }
         }
         return notRetrieved;
+    }
+
+    /**
+     * @dev set the borrow apy of specific token
+     * @param _apy the borrow apy of specific token
+     * @param mtype the type of token
+     */
+    function setBorrowAPY(uint256 _apy, uint256 mtype) external onlyOwner {
+        uint256 previousAPY;
+        uint256 newAPY;
+        if (mtype == 2) {
+            previousAPY = usdcBorrowAPY;
+            usdcBorrowAPY = _apy;
+            newAPY = usdcBorrowAPY;
+        } else if (mtype == 3) {
+            previousAPY = usdtBorrowAPY;
+            usdtBorrowAPY = _apy;
+            newAPY = usdtBorrowAPY;
+        } else if (mtype == 4) {
+            previousAPY = wbtcBorrowAPY;
+            wbtcBorrowAPY = _apy;
+            newAPY = wbtcBorrowAPY;
+        }
+        emit BorrowAPYUpdated(previousAPY, newAPY, mtype);
+    }
+
+    /**
+     * @dev set the lend apy of specific token
+     * @param _apy the lend apy of specific token
+     * @param mtype the type of token
+     */
+    function setLendAPY(uint256 _apy, uint256 mtype) external onlyOwner {
+        uint256 previousAPY;
+        uint256 newAPY;
+        if (mtype == 2) {
+            previousAPY = usdcLendAPY;
+            usdcLendAPY = _apy;
+            newAPY = usdcLendAPY;
+        } else if (mtype == 3) {
+            previousAPY = usdtLendAPY;
+            usdtLendAPY = _apy;
+            newAPY = usdtLendAPY;
+        } else if (mtype == 4) {
+            previousAPY = wbtcLendAPY;
+
+            wbtcLendAPY = _apy;
+            newAPY = wbtcLendAPY;
+        }
+        emit LendAPYUpdated(previousAPY, newAPY, mtype);
+    }
+
+     /**
+     * @dev set the price of odon
+     * @param _price the price of odon
+     */
+    function setPriceOdon(uint256 _price) external onlyOwner {
+        odonPrice = _price;
+        emit OdonPriceUpdated(_price);
     }
 }

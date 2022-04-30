@@ -1,31 +1,21 @@
 const hre = require("hardhat");
-// odon: 0xd9D905400b444732B6b47Df12735f9253e44DA06
-// usdc: 0xd9D905400b444732B6b47Df12735f9253e44DA06
-// usdt: 0xd9D905400b444732B6b47Df12735f9253e44DA06
-// wbtc: 0xd9D905400b444732B6b47Df12735f9253e44DA06
-// loan:  0x6DCaa48345deA866702eFbd084094449b6c83A40
-// npx hardhat verify --network testnet 0x6DCaa48345deA866702eFbd084094449b6c83A40 "0xd9D905400b444732B6b47Df12735f9253e44DA06"
+// odon: 0x28D3d93f3223A2B80E32e37311D4cB7147DeC5Cd
+// usdc: 0x7A38D14fA901B9962df16300579f86B640413841
+// usdt: 0x8ED23c0c13980B552fEEB07d16B0A3F084917f63
+// btc: 0x0888f978369185d44aa617F9a3FECc4192392B63
+// loan:  0x6719c3d7d181688400F53aa312d01A6e9AD6CFA1
+// npx hardhat verify --network rinkeby 0x6719c3d7d181688400F53aa312d01A6e9AD6CFA1 "0x28D3d93f3223A2B80E32e37311D4cB7147DeC5Cd" "0x7A38D14fA901B9962df16300579f86B640413841" "0x8ED23c0c13980B552fEEB07d16B0A3F084917f63" "0x0888f978369185d44aa617F9a3FECc4192392B63"
 async function main() {
-    const OdonToken = await hre.ethers.getContractFactory("OdonToken");
-    const UsdcToken = await hre.ethers.getContractFactory("UsdcToken");
-    const UsdtToken = await hre.ethers.getContractFactory("UsdtToken");
-    const WbtcToken = await hre.ethers.getContractFactory("WbtcToken");
+    const PriceConsumerV3 = await hre.ethers.getContractFactory("PriceConsumerV3");
+    const priceconsumer = await PriceConsumerV3.deploy();
+    await priceconsumer.deployed();
     const Loan = await hre.ethers.getContractFactory("Loan");
-    const odonToken = await OdonToken.deploy();
-    await odonToken.deployed();
-    const usdcToken = await UsdcToken.deploy();
-    await usdcToken.deployed();
-    const usdtToken = await UsdtToken.deploy();
-    await usdtToken.deployed();
-    const wbtcToken = await WbtcToken.deploy();
-    await wbtcToken.deployed();
-    const loan = await Loan.deploy(odonToken.address, usdcToken.address, usdtToken.address, wbtcToken.address);
+    const loan = await Loan.deploy( "0x28D3d93f3223A2B80E32e37311D4cB7147DeC5Cd", "0x7A38D14fA901B9962df16300579f86B640413841", "0x8ED23c0c13980B552fEEB07d16B0A3F084917f63", "0x0888f978369185d44aa617F9a3FECc4192392B63");
     await loan.deployed();
 
-    console.log("OdonToken deployed to:", odonToken.address);
-    console.log("UsdcToken deployed to:", usdcToken.address);
-    console.log("UsdtToken deployed to:", usdtToken.address);
-    console.log("WbtcToken deployed to:", wbtcToken.address);
+    await loan.setPriceOracle(priceconsumer.address);
+  
+    console.log("PriceOracle deployed to:", priceconsumer.address);
     console.log("Loan deployed to:", loan.address);
 }
 
