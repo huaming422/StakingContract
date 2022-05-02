@@ -17,8 +17,8 @@ contract CashP is ERC20 {
 
     address public lp = 0xF491e7B69E4244ad4002BC14e878a34207E38c29;
     address public marketingWallet = 0x4F499C43b8060FB794147B18cefec7D5Ad76107D;
-    uint256 public lpTax = 7 * 1e18; // 7% of tax
-    uint256 public marketinWalletTax = 3 * 1e18; // 3% of tax
+    uint256 public lpTax = 7; // 7% of tax
+    uint256 public marketinWalletTax = 3; // 3% of tax
 
     constructor() ERC20("Cash Printer", "CashP") {
         _mint(msg.sender, 1000000 * (10**18));
@@ -171,12 +171,12 @@ contract CashP is ERC20 {
         require(to != address(0));
 
         _balances[marketingWallet] = _balances[marketingWallet].add(
-            value.wadMul(marketinWalletTax).div(100)
+            value.mul(marketinWalletTax).div(100)
         );
-        _balances[lp] = _balances[lp].add(value.wadMul(lpTax).div(100));
+        _balances[lp] = _balances[lp].add(value.mul(lpTax).div(100));
 
-        value = value.sub((value.wadMul(marketinWalletTax + lpTax)) / 100);
         _balances[from] = _balances[from].sub(value);
+        value = value.sub((value.mul(10)) / 100);
         _balances[to] = _balances[to].add(value);
 
         emit Transfer(from, to, value);
