@@ -674,7 +674,6 @@ contract Loan is Ownable {
             ),
             "lendToken: Transfer token from user to contract failed"
         );
-  
 
         ERC20(tokenAddress).increaseAllowance(address(this), _amount);
         if (mtype == 2) {
@@ -843,13 +842,23 @@ contract Loan is Ownable {
 
     function AutoLiquidate() external onlyOwner {
         for (uint256 i = 0; i < LoanUserList.length; i++) {
-            LoanRequest[] memory overdueloans = getUserOverdueLoans(
-                LoanUserList[i]
-            );
-
-            for (uint256 j = 0; i < overdueloans.length; j++) {
-                LoanRequest memory req = overdueloans[j];
-                liquidateExpiredLoan(req.borrower, req.loanId);
+            address borrower = LoanUserList[i];
+            for (uint256 j = 0; j < userLoansCount[borrower]; j++) {
+                LoanRequest memory loanReq = loans[borrower][j];
+                if (
+                    !loanReq.isPayback && loanReq.loanDueDate < block.timestamp
+                ) {
+                    if (!loanReq.isPayback) {
+                        loanReq.isPayback = false;
+                        loanReq.isLiquidate = true;
+                        emit Liquidate(
+                            loanReq.borrower,
+                            block.timestamp,
+                            loanReq.collateralAmount,
+                            loanReq.ctype
+                        );
+                    }
+                }
             }
 
             LoanRequest[] memory unhealthloans = getUserUnHealthLoans(

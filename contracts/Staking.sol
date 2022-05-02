@@ -388,7 +388,7 @@ contract Staking is Ownable {
                 msg.sender,
                 realClaimAmount
             ),
-            "withDraw: fail transfer cashp from contract to user"
+            "claim: fail transfer cashp from contract to user"
         );
 
         require(
@@ -397,7 +397,7 @@ contract Staking is Ownable {
                 marketWalletAddress,
                 whaleTax
             ),
-            "withDraw: fail transfer cashp from contract to market wallet "
+            "claim: fail transfer cashp from contract to market wallet "
         );
 
         cashpTotalLiquidity.sub(totalClaimAmount);
