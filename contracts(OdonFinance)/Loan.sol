@@ -25,24 +25,24 @@ contract Loan is Ownable {
     uint256 public usdtTotalLiquidity;
     uint256 public btcTotalLiquidity;
     uint256 public totalLiquidity;
-    uint256 public odonPrice = 0.75 * 1e18;
+    uint256 public odonPrice = 0.5 * 1e8;
     address public movrAddress;
     address public odonAddress;
     address public usdcAddress;
     address public usdtAddress;
     address public btcAddress;
-    uint256 public usdtLTV = 75 * 1e18;
-    uint256 public usdcLTV = 75 * 1e18;
-    uint256 public btcLTV = 75 * 1e18;
+    uint256 public usdtLTV = 65 * 1e18;
+    uint256 public usdcLTV = 68 * 1e18;
+    uint256 public btcLTV = 54 * 1e18;
     uint256 public dangerousLTV = 85 * 1e18;
     uint256 public firstAddAPY = 3 * 1e18;
     uint256 public secondAddAPY = 5 * 1e18;
     uint256 public usdcBorrowAPY = 10 * 1e18;
     uint256 public usdtBorrowAPY = 11 * 1e18;
-    uint256 public wbtcBorrowAPY = 12 * 1e18;
+    uint256 public btcBorrowAPY = 12 * 1e18;
     uint256 public usdcLendAPY = 5 * 1e18;
     uint256 public usdtLendAPY = 6 * 1e18;
-    uint256 public wbtcLendAPY = 8 * 1e18;
+    uint256 public btcLendAPY = 8 * 1e18;
     bool public loanModeFirst = false;
 
     /**
@@ -174,6 +174,13 @@ contract Loan is Ownable {
     event Withdraw(bool isEarnInterest, uint256 withdrawAmount, uint256 mtype);
 
     /**
+     * @dev emitted on withdraw
+     * @param withdrawAmount the amount to withdraw
+     * @param mtype the type of token that withdrow
+     */
+    event WithDrawReserve(uint256 withdrawAmount, uint256 mtype);
+
+    /**
      * @dev emitted on payback
      * @param borrower the address of borrower
      * @param paybackSuccess the flag of payback success
@@ -195,27 +202,32 @@ contract Loan is Ownable {
 
     /**
      * @dev emitted on payback
-     * @param liquidator the address of borrower
+     * @param borrower the address of borrower
      * @param ctype the type of token that liquidated
      * @param liquidateAmount the amount to payback
      */
-    event Liquidate(address liquidator, uint256 liquidateAmount, uint256 ctype);
-
-    /**
-     * @dev emitted on update borrow apy
-     * @param previousAPY the previous apy
-     * @param newAPY the new apy
-     * @param mtype the type of token
-     */
-    event BorrowAPYUpdated(uint256 previousAPY, uint256 newAPY, uint256 mtype);
+    event Liquidate(
+        address borrower,
+        uint256 liquidateTime,
+        uint256 liquidateAmount,
+        uint256 ctype
+    );
 
     /**
      * @dev emitted on update lend apy
-     * @param previousAPY the previous apy
-     * @param newAPY the new apy
-     * @param mtype the type of token
+     * @param _usdcAPY the previous apy
+     * @param _usdtAPY the new apy
+     * @param _btcAPY the type of token
      */
-    event LendAPYUpdated(uint256 previousAPY, uint256 newAPY, uint256 mtype);
+    event BorrowAPYUpdated(uint256 _usdcAPY, uint256 _usdtAPY, uint256 _btcAPY);
+
+    /**
+     * @dev emitted on update lend apy
+     * @param _usdcAPY the previous apy
+     * @param _usdtAPY the new apy
+     * @param _btcAPY the type of token
+     */
+    event LendAPYUpdated(uint256 _usdcAPY, uint256 _usdtAPY, uint256 _btcAPY);
 
     /**
      * @dev emitted on set price oracle
@@ -229,14 +241,20 @@ contract Loan is Ownable {
      */
     event OdonPriceUpdated(uint256 _price);
 
+    /**
+     * @dev emitted on set duration mode of loan
+     * @param mtype the type of mode
+     */
+    event LoanDurationModeUpdated(uint256 mtype);
+
     constructor(
         address _odonAddress,
         address _usdcAddress,
         address _usdtAddress,
         address _btcAddress
     ) {
-        loanCount = 1;
-        lendCount = 1;
+        loanCount = 0;
+        lendCount = 0;
         totalLiquidity = 0;
         usdcTotalLiquidity = 0;
         odonTotalLiquidity = 0;
@@ -358,11 +376,11 @@ contract Loan is Ownable {
         );
         uint256 tokenPrice;
         if (mtype == 2) {
-            tokenPrice =uint256(priceOracle.getUSDCLatestPrice());
+            tokenPrice = priceOracle.getUSDCLatestPrice();
         } else if (mtype == 3) {
-            tokenPrice =uint256(priceOracle.getUSDTLatestPrice());
+            tokenPrice = priceOracle.getUSDTLatestPrice();
         } else if (mtype == 4) {
-             tokenPrice =uint256(priceOracle.getBTCLatestPrice());
+            tokenPrice = priceOracle.getBTCLatestPrice();
         } else if (mtype == 5) {
             tokenPrice = odonPrice;
         }
@@ -457,7 +475,7 @@ contract Loan is Ownable {
         } else if (mtype == 3) {
             borrowAPY = usdtBorrowAPY;
         } else if (mtype == 4) {
-            borrowAPY = wbtcBorrowAPY;
+            borrowAPY = btcBorrowAPY;
         }
         if (loanModeFirst) {
             if (_duration == 7) {
@@ -602,7 +620,7 @@ contract Loan is Ownable {
             );
         } else if (mtype == 4) {
             request.paybackAmount = _amount.add(
-                _amount.wadMul(wbtcLendAPY).div(100)
+                _amount.wadMul(btcLendAPY).div(100)
             );
         }
         request.timeLend = block.timestamp;
@@ -632,6 +650,43 @@ contract Loan is Ownable {
             request.retrieved,
             request.mtype
         );
+    }
+
+    /**
+     * @dev lend the specific amount of tokens
+     * @param _amount the amount of tokens
+     * @param mtype the type token for loan
+     */
+    function depositToken(uint256 _amount, uint256 mtype) public {
+        address tokenAddress;
+        if (mtype == 2) {
+            tokenAddress = usdcAddress;
+        } else if (mtype == 3) {
+            tokenAddress = usdtAddress;
+        } else if (mtype == 4) {
+            tokenAddress = btcAddress;
+        }
+        require(
+            ERC20(tokenAddress).transferFrom(
+                msg.sender,
+                address(this),
+                _amount
+            ),
+            "lendToken: Transfer token from user to contract failed"
+        );
+  
+
+        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        if (mtype == 2) {
+            usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
+        } else if (mtype == 3) {
+            usdtTotalLiquidity = usdtTotalLiquidity.add(_amount);
+        }
+        if (mtype == 4) {
+            btcTotalLiquidity = btcTotalLiquidity.add(_amount);
+        }
+        addUserToLendUserList(msg.sender);
+        emit InitBalance(msg.sender, _amount, mtype);
     }
 
     /**
@@ -686,7 +741,7 @@ contract Loan is Ownable {
         } else if (mtype == 4) {
             totalPrice = btcTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
         } else if (mtype == 5) {
-            totalPrice = odonTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+            totalPrice = odonTotalLiquidity.wadMul(odonPrice);
         }
         return totalPrice;
     }
@@ -734,7 +789,10 @@ contract Loan is Ownable {
      * @param _borrower the address of borrower
      * @param _id the id of loan
      */
-    function liquidate(address _borrower, uint256 _id) external onlyOwner {
+    function liquidateUnhealthedLoans(address _borrower, uint256 _id)
+        internal
+        onlyOwner
+    {
         // LendRequest memory
         LoanRequest storage loanReq = loans[_borrower][_id];
         require(!loanReq.isPayback, "payback: payback already");
@@ -742,37 +800,67 @@ contract Loan is Ownable {
             checkLoanHealth(_borrower, _id) == false,
             "withdrawEther: Loan health is true"
         );
-        require(
-            checkEnoughLiquidity(loanReq.collateralAmount, loanReq.ctype),
-            "withDrawEther: not enough liquidity"
-        );
-        address collateralAddress;
-
-        if (loanReq.ctype == 2) {
-            collateralAddress = movrAddress;
-        } else {
-            collateralAddress = odonAddress;
-        }
-
-        ERC20(collateralAddress).transferFrom(
-            address(this),
-            msg.sender,
-            loanReq.collateralAmount
-        );
-        ERC20(collateralAddress).increaseAllowance(
-            address(this),
-            loanReq.collateralAmount
-        );
-        if (loanReq.ctype == 1) {
-            totalLiquidity = totalLiquidity.sub(loanReq.collateralAmount);
-        } else {
-            odonTotalLiquidity = odonTotalLiquidity.sub(
-                loanReq.collateralAmount
-            );
-        }
         loanReq.isPayback = false;
         loanReq.isLiquidate = true;
-        emit Liquidate(msg.sender, loanReq.collateralAmount, loanReq.ctype);
+        emit Liquidate(
+            loanReq.borrower,
+            block.timestamp,
+            loanReq.collateralAmount,
+            loanReq.ctype
+        );
+    }
+
+    /**
+     * @dev liquidate the unhealthed loans
+     * @param _borrower the address of borrower
+     * @param _id the id of loan
+     */
+    function liquidateExpiredLoan(address _borrower, uint256 _id)
+        internal
+        onlyOwner
+    {
+        // LendRequest memory
+        LoanRequest storage loanReq = loans[_borrower][_id];
+        require(!loanReq.isPayback, "payback: payback already");
+        require(
+            checkLoanExpire(_borrower, _id) == true,
+            "withdrawEther: Loan is not expired"
+        );
+
+        loanReq.isPayback = false;
+        loanReq.isLiquidate = true;
+        emit Liquidate(
+            loanReq.borrower,
+            block.timestamp,
+            loanReq.collateralAmount,
+            loanReq.ctype
+        );
+    }
+
+    /**
+     * @dev Liquidate unhealthed loans and expired loans
+     */
+
+    function AutoLiquidate() external onlyOwner {
+        for (uint256 i = 0; i < LoanUserList.length; i++) {
+            LoanRequest[] memory overdueloans = getUserOverdueLoans(
+                LoanUserList[i]
+            );
+
+            for (uint256 j = 0; i < overdueloans.length; j++) {
+                LoanRequest memory req = overdueloans[j];
+                liquidateExpiredLoan(req.borrower, req.loanId);
+            }
+
+            LoanRequest[] memory unhealthloans = getUserUnHealthLoans(
+                LoanUserList[i]
+            );
+
+            for (uint256 k = 0; k < unhealthloans.length; k++) {
+                LoanRequest memory req = unhealthloans[k];
+                liquidateUnhealthedLoans(req.borrower, req.loanId);
+            }
+        }
     }
 
     /**
@@ -798,7 +886,7 @@ contract Loan is Ownable {
             tokenAddress = usdtAddress;
         } else if (mtype == 4) {
             tokenAddress = btcAddress;
-        } else if (mtype == 4) {
+        } else if (mtype == 5) {
             tokenAddress = odonAddress;
         }
 
@@ -814,16 +902,18 @@ contract Loan is Ownable {
         ERC20(tokenAddress).increaseAllowance(address(this), _amount);
 
         if (mtype == 1) {
-            totalLiquidity = totalLiquidity.add(_amount);
+            totalLiquidity = totalLiquidity.sub(_amount);
         } else if (mtype == 2) {
-            usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
+            usdcTotalLiquidity = usdcTotalLiquidity.sub(_amount);
         } else if (mtype == 3) {
-            usdcTotalLiquidity = usdtTotalLiquidity.add(_amount);
+            usdtTotalLiquidity = usdtTotalLiquidity.sub(_amount);
         } else if (mtype == 4) {
-            usdcTotalLiquidity = btcTotalLiquidity.add(_amount);
+            btcTotalLiquidity = btcTotalLiquidity.sub(_amount);
         } else if (mtype == 5) {
-            usdcTotalLiquidity = odonTotalLiquidity.add(_amount);
+            odonTotalLiquidity = odonTotalLiquidity.sub(_amount);
         }
+
+        emit WithDrawReserve(_amount, mtype);
     }
 
     /**
@@ -997,23 +1087,6 @@ contract Loan is Ownable {
     }
 
     /**
-     * @dev get the all loans of user by admin
-     */
-    function getAllUserLoansByAdmin(address borrower)
-        public
-        view
-        returns (LoanRequest[] memory)
-    {
-        LoanRequest[] memory requests = new LoanRequest[](
-            userLoansCount[borrower]
-        );
-        for (uint256 i = 0; i < userLoansCount[borrower]; i++) {
-            requests[i] = loans[borrower][i];
-        }
-        return requests;
-    }
-
-    /**
      * @dev get the all loans of user
      */
     function getAllUserLoans() public view returns (LoanRequest[] memory) {
@@ -1035,7 +1108,11 @@ contract Loan is Ownable {
         );
         for (uint256 i = 0; i < userLoansCount[msg.sender]; i++) {
             LoanRequest memory req = loans[msg.sender][i];
-            if (!req.isPayback && req.loanDueDate > block.timestamp) {
+            if (
+                !req.isPayback &&
+                !req.isLiquidate &&
+                req.loanDueDate > block.timestamp
+            ) {
                 ongoing[i] = req;
             }
         }
@@ -1045,12 +1122,16 @@ contract Loan is Ownable {
     /**
      * @dev get the overdue loans of user
      */
-    function getUserOverdueLoans() public view returns (LoanRequest[] memory) {
+    function getUserOverdueLoans(address borrower)
+        public
+        view
+        returns (LoanRequest[] memory)
+    {
         LoanRequest[] memory overdue = new LoanRequest[](
-            userLoansCount[msg.sender]
+            userLoansCount[borrower]
         );
-        for (uint256 i = 0; i < userLoansCount[msg.sender]; i++) {
-            LoanRequest memory req = loans[msg.sender][i];
+        for (uint256 i = 0; i < userLoansCount[borrower]; i++) {
+            LoanRequest memory req = loans[borrower][i];
             if (!req.isPayback && req.loanDueDate < block.timestamp) {
                 overdue[i] = req;
             }
@@ -1061,36 +1142,27 @@ contract Loan is Ownable {
     /**
      * @dev get the unhealth loans of user
      */
-    function getUserUnHealthLoans() public view returns (LoanRequest[] memory) {
+    function getUserUnHealthLoans(address borrower)
+        public
+        view
+        returns (LoanRequest[] memory)
+    {
         LoanRequest[] memory unhealth = new LoanRequest[](
-            userLoansCount[msg.sender]
+            userLoansCount[borrower]
         );
-        for (uint256 i = 0; i < userLoansCount[msg.sender]; i++) {
-            LoanRequest memory req = loans[msg.sender][i];
-            if (!req.isPayback && req.loanDueDate > block.timestamp) {
-                if (checkLoanHealth(msg.sender, i) == false) {
+        for (uint256 i = 0; i < userLoansCount[borrower]; i++) {
+            LoanRequest memory req = loans[borrower][i];
+            if (
+                !req.isPayback &&
+                !req.isLiquidate &&
+                req.loanDueDate > block.timestamp
+            ) {
+                if (checkLoanHealth(borrower, i) == false) {
                     unhealth[i] = req;
                 }
             }
         }
         return unhealth;
-    }
-
-    /**
-     * @dev get the all lends of user by admin
-     */
-    function getUserAllLendsByAdmin(address lender)
-        public
-        view
-        returns (LendRequest[] memory)
-    {
-        LendRequest[] memory requests = new LendRequest[](
-            userLendsCount[lender]
-        );
-        for (uint256 i = 0; i < userLendsCount[lender]; i++) {
-            requests[i] = lends[lender][i];
-        }
-        return requests;
     }
 
     /**
@@ -1127,60 +1199,58 @@ contract Loan is Ownable {
     }
 
     /**
-     * @dev set the borrow apy of specific token
-     * @param _apy the borrow apy of specific token
-     * @param mtype the type of token
+     * @dev set the lend apy of specific token
+     * @param _usdcapy the apy of usdctoken
+     * @param _usdtapy the apy of usdttoken
+     * @param _btcapy the apy of btctoken
      */
-    function setBorrowAPY(uint256 _apy, uint256 mtype) external onlyOwner {
-        uint256 previousAPY;
-        uint256 newAPY;
-        if (mtype == 2) {
-            previousAPY = usdcBorrowAPY;
-            usdcBorrowAPY = _apy;
-            newAPY = usdcBorrowAPY;
-        } else if (mtype == 3) {
-            previousAPY = usdtBorrowAPY;
-            usdtBorrowAPY = _apy;
-            newAPY = usdtBorrowAPY;
-        } else if (mtype == 4) {
-            previousAPY = wbtcBorrowAPY;
-            wbtcBorrowAPY = _apy;
-            newAPY = wbtcBorrowAPY;
-        }
-        emit BorrowAPYUpdated(previousAPY, newAPY, mtype);
+    function setBorrowAPY(
+        uint256 _usdcapy,
+        uint256 _usdtapy,
+        uint256 _btcapy
+    ) external onlyOwner {
+        usdcBorrowAPY = _usdcapy;
+        usdtBorrowAPY = _usdtapy;
+        btcBorrowAPY = _btcapy;
+        emit BorrowAPYUpdated(usdcBorrowAPY, usdtBorrowAPY, btcBorrowAPY);
     }
 
     /**
      * @dev set the lend apy of specific token
-     * @param _apy the lend apy of specific token
-     * @param mtype the type of token
+     * @param _usdcapy the apy of usdctoken
+     * @param _usdtapy the apy of usdttoken
+     * @param _btcapy the apy of btctoken
      */
-    function setLendAPY(uint256 _apy, uint256 mtype) external onlyOwner {
-        uint256 previousAPY;
-        uint256 newAPY;
-        if (mtype == 2) {
-            previousAPY = usdcLendAPY;
-            usdcLendAPY = _apy;
-            newAPY = usdcLendAPY;
-        } else if (mtype == 3) {
-            previousAPY = usdtLendAPY;
-            usdtLendAPY = _apy;
-            newAPY = usdtLendAPY;
-        } else if (mtype == 4) {
-            previousAPY = wbtcLendAPY;
-
-            wbtcLendAPY = _apy;
-            newAPY = wbtcLendAPY;
-        }
-        emit LendAPYUpdated(previousAPY, newAPY, mtype);
+    function setLendAPY(
+        uint256 _usdcapy,
+        uint256 _usdtapy,
+        uint256 _btcapy
+    ) external onlyOwner {
+        usdcLendAPY = _usdcapy;
+        usdtLendAPY = _usdtapy;
+        btcLendAPY = _btcapy;
+        emit LendAPYUpdated(usdcLendAPY, usdtLendAPY, btcLendAPY);
     }
 
-     /**
+    /**
      * @dev set the price of odon
      * @param _price the price of odon
      */
     function setPriceOdon(uint256 _price) external onlyOwner {
         odonPrice = _price;
         emit OdonPriceUpdated(_price);
+    }
+
+    /**
+     * @dev set the duration of loan
+     * @param mtype the type of duration mode
+     */
+    function setLoanDurationMode(uint256 mtype) external onlyOwner {
+        if (mtype == 1) {
+            loanModeFirst = true;
+        } else {
+            loanModeFirst = false;
+        }
+        emit LoanDurationModeUpdated(mtype);
     }
 }

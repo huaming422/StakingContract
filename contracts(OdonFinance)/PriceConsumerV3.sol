@@ -14,18 +14,18 @@ contract PriceConsumerV3 {
      * Aggregator: ETH/USD
      * USDC: 0xa24de01df22b63d23Ebc1882a5E3d4ec0d907bFB
      * MATIC: 0x7794ee502922e2b723432DDD852B3C30A911F021
-     * BTC: 0x2431452A0010a43878bF198e170F6319Af6d27F4
+     * BTC: 0xECe365B379E1dD183B20fc5f022230C044d51404
      */
     constructor() {
         USDCpriceFeed = AggregatorV3Interface(0xa24de01df22b63d23Ebc1882a5E3d4ec0d907bFB);
         USDTpriceFeed = AggregatorV3Interface(0x7794ee502922e2b723432DDD852B3C30A911F021);
-        BTCpriceFeed = AggregatorV3Interface(	0x2431452A0010a43878bF198e170F6319Af6d27F4);
+        BTCpriceFeed = AggregatorV3Interface(0xECe365B379E1dD183B20fc5f022230C044d51404);
     }
 
     /**
      * Returns the usdc latest price
      */
-    function getUSDCLatestPrice() public view returns (int) {
+    function getUSDCLatestPrice() public view returns (uint256) {
         (
             /*uint80 roundID*/,
             int price,
@@ -33,12 +33,12 @@ contract PriceConsumerV3 {
             /*uint timeStamp*/,
             /*uint80 answeredInRound*/
         ) = USDCpriceFeed.latestRoundData();
-        return price;
+        return uint256(price);
     }
     /**
      * Returns the usdc latest price
      */
-    function getUSDTLatestPrice() public view returns (int) {
+    function getUSDTLatestPrice() public view returns (uint256) {
         (
             /*uint80 roundID*/,
             int price,
@@ -46,12 +46,12 @@ contract PriceConsumerV3 {
             /*uint timeStamp*/,
             /*uint80 answeredInRound*/
         ) = USDTpriceFeed.latestRoundData();
-        return price;
+        return uint256(price);
     }
     /**
      * Returns the usdc latest price
      */
-    function getBTCLatestPrice() public view returns (int) {
+    function getBTCLatestPrice() public view returns (uint256) {
         (
             /*uint80 roundID*/,
             int price,
@@ -59,6 +59,6 @@ contract PriceConsumerV3 {
             /*uint timeStamp*/,
             /*uint80 answeredInRound*/
         ) = BTCpriceFeed.latestRoundData();
-        return price;
+        return uint256(price);
     }
 }

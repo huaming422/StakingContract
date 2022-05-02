@@ -15,14 +15,12 @@ contract CashP is ERC20 {
 
     uint256 private _totalSupply;
 
-    address public lp = 0xA08d772e59B6eBA685713721adA90AAee7F46c3d;
-    // address public lp = 0xF491e7B69E4244ad4002BC14e878a34207E38c29;
+    address public lp = 0xF491e7B69E4244ad4002BC14e878a34207E38c29;
     address public marketingWallet = 0x4F499C43b8060FB794147B18cefec7D5Ad76107D;
     uint256 public lpTax = 7 * 1e18; // 7% of tax
     uint256 public marketinWalletTax = 3 * 1e18; // 3% of tax
 
     constructor() ERC20("Cash Printer", "CashP") {
-        
         _mint(msg.sender, 1000000 * (10**18));
     }
 
@@ -228,4 +226,6 @@ contract CashP is ERC20 {
         _burn(account, value);
         emit Approval(account, msg.sender, _allowed[account][msg.sender]);
     }
+
+
 }
