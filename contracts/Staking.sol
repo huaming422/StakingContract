@@ -20,7 +20,7 @@ contract Staking is Ownable {
     uint256 public cashpTotalLiquidity;
     address public cashpAddress;
     address public marketWalletAddress;
-    uint256 public stakingPeriod = 180 days;
+    uint256 public stakingPeriod = 180 minutes;
     uint256 public withdrawPeriod = 1 minutes;
     uint256 public cashpPrice = 0.7 * 1e8;
     uint256 public ROI = 2; // 2 %
@@ -155,7 +155,7 @@ contract Staking is Ownable {
         request.lendId = userLendsCount[msg.sender];
         request.lendAmount = depositAmount;
         request.timeLend = block.timestamp;
-        request.timeLendDueDate = block.timestamp + 180 days;
+        request.timeLendDueDate = block.timestamp + 180 minutes;
         request.timeLastClaim = block.timestamp;
         request.timeNextClaim = block.timestamp + 1 minutes;
         request.retrieved = false;
@@ -218,7 +218,7 @@ contract Staking is Ownable {
         }
         require(
             checkEnoughLiquidity(totalClaimAmount),
-            "withDraw: not enough FTM liquidity"
+            "compound: not enough Cashp liquidity of Marketing"
         );
 
         LendRequest memory request;
@@ -226,7 +226,7 @@ contract Staking is Ownable {
         request.lendId = userLendsCount[msg.sender];
         request.lendAmount = totalClaimAmount;
         request.timeLend = block.timestamp;
-        request.timeLendDueDate = block.timestamp + 180 days;
+        request.timeLendDueDate = block.timestamp + 180 minutes;
         request.timeLastClaim = block.timestamp;
         request.timeNextClaim = block.timestamp + 1 minutes;
         request.retrieved = false;
@@ -283,7 +283,7 @@ contract Staking is Ownable {
     function withDrawReserve(uint256 _amount) external onlyOwner {
         require(
             checkEnoughLiquidity(_amount),
-            "withDraw: not enough liquidity"
+            "withDrawReserve: not enough Cashp liquidity of Marketing"
         );
 
         require(
@@ -310,6 +310,7 @@ contract Staking is Ownable {
         }
         return requests;
     }
+
     /**
      * @dev claim the all interests
      */
@@ -349,7 +350,7 @@ contract Staking is Ownable {
         }
         require(
             checkEnoughLiquidity(totalClaimAmount),
-            "withDraw: not enough FTM liquidity"
+            "claim: not enough Cashp liquidity of Marketing"
         );
 
         uint256 percentage = totalClaimAmount.wadDiv(cashpTotalLiquidity).mul(

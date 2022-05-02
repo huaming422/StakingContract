@@ -224,7 +224,7 @@ contract Staking is Ownable {
         }
         require(
             checkEnoughLiquidity(totalClaimAmount),
-            "withDraw: not enough FTM liquidity"
+            "compound: not enough Cashp liquidity of Marketing"
         );
 
         LendRequest memory request;
@@ -289,7 +289,7 @@ contract Staking is Ownable {
     function withDrawReserve(uint256 _amount) external onlyOwner {
         require(
             checkEnoughLiquidity(_amount),
-            "withDraw: not enough liquidity"
+            "withDrawReserve: not enough Cashp liquidity of Marketing"
         );
 
         require(
@@ -362,7 +362,7 @@ contract Staking is Ownable {
         }
         require(
             checkEnoughLiquidity(totalClaimAmount),
-            "withDraw: not enough FTM liquidity"
+            "claim: not enough Cashp liquidity of Marketing"
         );
 
         uint256 percentage = totalClaimAmount.wadDiv(cashpTotalLiquidity).mul(
