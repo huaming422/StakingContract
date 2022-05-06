@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 /**
  * @title WadMath library
  * @notice The wad math library.
- * @author Ddrabin
+ * @author Alpha
  **/
 
 library WadMath {

@@ -4,7 +4,7 @@ pragma solidity >=0.4.22 <0.9.0;
 /**
  * @title Math library
  * @notice The math library.
- * @author ddrabin
+ * @author Alpha
  **/
 
  library Math {

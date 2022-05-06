@@ -20,7 +20,7 @@ contract Staking is Ownable {
     uint256 public cashpTotalLiquidity;
     address public cashpAddress;
     address public marketWalletAddress;
-    uint256 public stakingPeriod = 180 minutes;
+    uint256 public stakingPeriod = 180 days;
     uint256 public withdrawPeriod = 1 minutes;
     uint256 public cashpPrice = 0.7 * 1e8;
     uint256 public ROI = 2; // 2 %
@@ -155,7 +155,7 @@ contract Staking is Ownable {
         request.lendId = userLendsCount[msg.sender];
         request.lendAmount = depositAmount;
         request.timeLend = block.timestamp;
-        request.timeLendDueDate = block.timestamp + 180 minutes;
+        request.timeLendDueDate = block.timestamp + 180 days;
         request.timeLastClaim = block.timestamp;
         request.timeNextClaim = block.timestamp + 1 minutes;
         request.retrieved = false;
@@ -226,7 +226,7 @@ contract Staking is Ownable {
         request.lendId = userLendsCount[msg.sender];
         request.lendAmount = totalClaimAmount;
         request.timeLend = block.timestamp;
-        request.timeLendDueDate = block.timestamp + 180 minutes;
+        request.timeLendDueDate = block.timestamp + 180 days;
         request.timeLastClaim = block.timestamp;
         request.timeNextClaim = block.timestamp + 1 minutes;
         request.retrieved = false;
@@ -418,6 +418,44 @@ contract Staking is Ownable {
                 }
             }
         }
+    }
+
+    function getClaimAmount() public view returns (uint256) {
+        uint256 totalClaimAmount;
+        LendRequest[] memory requests = getUserAllLends();
+        for (uint256 i = 0; i < requests.length; i++) {
+            if (!requests[i].retrieved) {
+                if (requests[i].lendId >= 0) {
+                    if (requests[i].timeNextClaim <= block.timestamp) {
+                        if (requests[i].lender == msg.sender) {
+                            uint256 stakingDuration;
+
+                            if (
+                                requests[i].timeLendDueDate >= block.timestamp
+                            ) {
+                                stakingDuration = (block.timestamp -
+                                    requests[i].timeLastClaim).div(60);
+                            } else {
+                                stakingDuration = (requests[i].timeLendDueDate -
+                                    requests[i].timeLastClaim).div(60);
+                            }
+
+                            uint256 interestAmount = requests[i]
+                                .lendAmount
+                                .mul(ROI)
+                                .div(100)
+                                .mul(stakingDuration);
+
+                            totalClaimAmount = totalClaimAmount.add(
+                                interestAmount
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        return totalClaimAmount;
     }
 
     /**

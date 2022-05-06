@@ -10,16 +10,16 @@ contract PriceConsumerV3 {
     AggregatorV3Interface internal BTCpriceFeed;
 
     /**
-     * Network: Rinkeby
+     * Network: Moonriver
      * Aggregator: ETH/USD
-     * USDC: 0xa24de01df22b63d23Ebc1882a5E3d4ec0d907bFB
-     * MATIC: 0x7794ee502922e2b723432DDD852B3C30A911F021
-     * BTC: 0xECe365B379E1dD183B20fc5f022230C044d51404
+     * USDC: 0x12870664a77Dd55bBdcDe32f91EB3244F511eF2e
+     * USDT: 0xF80DAd54AF79257D41c30014160349896ca5370a
+     * BTC: 0x1B5C6cF9Df1CBF30387C24CC7DB1787CCf65C797
      */
     constructor() {
-        USDCpriceFeed = AggregatorV3Interface(0xa24de01df22b63d23Ebc1882a5E3d4ec0d907bFB);
-        USDTpriceFeed = AggregatorV3Interface(0x7794ee502922e2b723432DDD852B3C30A911F021);
-        BTCpriceFeed = AggregatorV3Interface(0xECe365B379E1dD183B20fc5f022230C044d51404);
+        USDCpriceFeed = AggregatorV3Interface(0x12870664a77Dd55bBdcDe32f91EB3244F511eF2e);
+        USDTpriceFeed = AggregatorV3Interface(0xF80DAd54AF79257D41c30014160349896ca5370a);
+        BTCpriceFeed = AggregatorV3Interface(0x1B5C6cF9Df1CBF30387C24CC7DB1787CCf65C797);
     }
 
     /**

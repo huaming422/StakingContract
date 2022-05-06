@@ -3,7 +3,7 @@ require("@nomiclabs/hardhat-etherscan");
 
 require('dotenv').config();
 
-const { ETH_API_URL, PRIVATE_KEY, ETHSCAN_API } = process.env;
+const { MOONRIVER_API_URL,ETH_API_URL, PRIVATE_KEY, MOONRIVER_API,ETHSCAN_API } = process.env;
 
 // This is a sample Hardhat task. To learn how to create your own go to
 // https://hardhat.org/guides/create-task.html
@@ -32,12 +32,16 @@ module.exports = {
         }
       },
     networks: {
+        moonriver: {
+            url: MOONRIVER_API_URL,
+            accounts: [PRIVATE_KEY],
+        },
         rinkeby: {
             url: ETH_API_URL,
             accounts: [PRIVATE_KEY],
         },
     },
     etherscan: {
-        apiKey: ETHSCAN_API
+        apiKey: MOONRIVER_API
     },
 };

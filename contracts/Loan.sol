@@ -3,7 +3,7 @@ pragma solidity >=0.4.22 <0.9.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./PriceConsumerV3.sol";
 import "./libraries/WadMath.sol";
 import "./libraries/Math.sol";
@@ -25,7 +25,7 @@ contract Loan is Ownable {
     uint256 public usdtTotalLiquidity;
     uint256 public btcTotalLiquidity;
     uint256 public totalLiquidity;
-    uint256 public odonPrice = 0.5 * 1e8;
+    uint256 public odonPrice = 0.05 * 1e8;
     address public movrAddress;
     address public odonAddress;
     address public usdcAddress;
@@ -43,7 +43,7 @@ contract Loan is Ownable {
     uint256 public usdcLendAPY = 5 * 1e18;
     uint256 public usdtLendAPY = 6 * 1e18;
     uint256 public btcLendAPY = 8 * 1e18;
-    bool public loanModeFirst = false;
+    uint256 public loanMode = 1;
 
     /**
      * @dev price oracle of the lending pool contract.
@@ -202,16 +202,10 @@ contract Loan is Ownable {
 
     /**
      * @dev emitted on payback
-     * @param borrower the address of borrower
-     * @param ctype the type of token that liquidated
-     * @param liquidateAmount the amount to payback
+     * @param liquidator the address of liquidator
+     * @param liquidateTime the time to payback
      */
-    event Liquidate(
-        address borrower,
-        uint256 liquidateTime,
-        uint256 liquidateAmount,
-        uint256 ctype
-    );
+    event Liquidate(address liquidator, uint256 liquidateTime);
 
     /**
      * @dev emitted on update lend apy
@@ -230,6 +224,14 @@ contract Loan is Ownable {
     event LendAPYUpdated(uint256 _usdcAPY, uint256 _usdtAPY, uint256 _btcAPY);
 
     /**
+     * @dev emitted on update lend apy
+     * @param _usdcLTV the previous apy
+     * @param _usdtLTV the new apy
+     * @param _btcLTV the type of token
+     */
+    event StandardLTVUpdated(uint256 _usdcLTV, uint256 _usdtLTV, uint256 _btcLTV);
+
+    /**
      * @dev emitted on set price oracle
      * @param priceOracleAddress the address of the price oracle
      */
@@ -237,7 +239,7 @@ contract Loan is Ownable {
 
     /**
      * @dev emitted on set price of odon
-     * @param _price the address of the price oracle
+     * @param _price the price of the odon
      */
     event OdonPriceUpdated(uint256 _price);
 
@@ -277,14 +279,14 @@ contract Loan is Ownable {
             tokenAddress = btcAddress;
         }
         require(
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 msg.sender,
                 address(this),
                 _amount
             ),
             "Transaction failed on init function"
         );
-        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
         totalLiquidity = address(this).balance;
         if (mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
@@ -463,7 +465,15 @@ contract Loan is Ownable {
         LoanRequest memory newLoan;
         newLoan.borrower = msg.sender;
         newLoan.loanAmount = _amount;
-        newLoan.collateralAmount = collateralAmount(_amount, mtype, ctype);
+        uint256 lnamount;
+        if (mtype == 2) {
+            lnamount = _amount * 1000000000000;
+        } else if (mtype == 3) {
+            lnamount = _amount * 1000000000000;
+        } else if (mtype == 4) {
+            lnamount = _amount * 10000000000;
+        }
+        newLoan.collateralAmount = collateralAmount(lnamount, mtype, ctype);
         newLoan.loanId = userLoansCount[msg.sender];
         newLoan.isPayback = false;
         newLoan.isLiquidate = false;
@@ -477,7 +487,7 @@ contract Loan is Ownable {
         } else if (mtype == 4) {
             borrowAPY = btcBorrowAPY;
         }
-        if (loanModeFirst) {
+        if (loanMode == 1) {
             if (_duration == 7) {
                 newLoan.paybackAmount = _amount.add(
                     _amount.wadMul(borrowAPY).div(100)
@@ -499,7 +509,7 @@ contract Loan is Ownable {
             } else {
                 revert("loanToken: no valid duration!");
             }
-        } else {
+        } else if (loanMode == 2) {
             if (_duration == 30) {
                 newLoan.paybackAmount = _amount.add(
                     _amount.wadMul(borrowAPY).div(100)
@@ -521,22 +531,44 @@ contract Loan is Ownable {
             } else {
                 revert("loanToken: no valid duration!");
             }
+        } else if (loanMode == 3) {
+            if (_duration == 90) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 90 days;
+                newLoan.duration = 90 days;
+            } else if (_duration == 180) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(firstAddAPY + borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 180 days;
+                newLoan.duration = 180 days;
+            } else if (_duration == 360) {
+                newLoan.paybackAmount = _amount.add(
+                    _amount.wadMul(secondAddAPY + borrowAPY).div(100)
+                );
+                newLoan.loanDueDate = block.timestamp + 360 days;
+                newLoan.duration = 360 days;
+            } else {
+                revert("loanToken: no valid duration!");
+            }
         }
         address collateralAddress;
         if (ctype != 1) {
             collateralAddress = odonAddress;
             require(
-                ERC20(collateralAddress).transferFrom(
+                IERC20(collateralAddress).transferFrom(
                     msg.sender,
                     address(this),
                     newLoan.collateralAmount
                 ),
                 "loanToken: Transfer token from contract to user failed"
             );
-            ERC20(collateralAddress).increaseAllowance(
-                address(this),
-                newLoan.collateralAmount
-            );
+            // IERC20(collateralAddress).increaseAllowance(
+            //     address(this),
+            //     newLoan.collateralAmount
+            // );
         }
         if (ctype == 1) {
             // totalLiquidity = totalLiquidity.add(msg.value);
@@ -554,7 +586,7 @@ contract Loan is Ownable {
             tokenAddress = btcAddress;
         }
         require(
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 address(this),
                 msg.sender,
                 _amount
@@ -598,7 +630,7 @@ contract Loan is Ownable {
             tokenAddress = btcAddress;
         }
         require(
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 msg.sender,
                 address(this),
                 _amount
@@ -631,7 +663,7 @@ contract Loan is Ownable {
         lendCount++;
         userLendsCount[msg.sender]++;
 
-        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
         if (mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
         } else if (mtype == 3) {
@@ -667,7 +699,7 @@ contract Loan is Ownable {
             tokenAddress = btcAddress;
         }
         require(
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 msg.sender,
                 address(this),
                 _amount
@@ -675,7 +707,7 @@ contract Loan is Ownable {
             "lendToken: Transfer token from user to contract failed"
         );
 
-        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
         if (mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
         } else if (mtype == 3) {
@@ -708,11 +740,23 @@ contract Loan is Ownable {
         require(priceCollateralToken > 0, "ether price isn't correct");
         uint256 priceLoanToken = getTokenPriceInUSD(loanReq.mtype);
         require(priceLoanToken > 0, "token price isn't correct");
-        uint256 totalLoanPrice = loanReq.paybackAmount.wadMul(priceLoanToken);
-        uint256 totalCollateralPrice = loanReq.collateralAmount.wadMul(
+        uint256 totalLoanPrice = loanReq.paybackAmount.mul(priceLoanToken);
+        uint256 totalCollateralPrice = loanReq.collateralAmount.mul(
             priceCollateralToken
         );
-        loanLTV = totalLoanPrice.wadDiv(totalCollateralPrice).mul(100);
+        if (loanReq.mtype == 2) {
+            loanLTV = totalLoanPrice.wadDiv(totalCollateralPrice).mul(100).mul(
+                1000000000000
+            );
+        } else if (loanReq.mtype == 3) {
+            loanLTV = totalLoanPrice.wadDiv(totalCollateralPrice).mul(100).mul(
+                10000000000
+            );
+        } else if (loanReq.mtype == 4) {
+            loanLTV = totalLoanPrice.wadDiv(totalCollateralPrice).mul(100).mul(
+                100000000
+            );
+        }
         return loanLTV;
     }
 
@@ -732,15 +776,23 @@ contract Loan is Ownable {
         );
 
         if (mtype == 1) {
-            totalPrice = totalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+            totalPrice = totalLiquidity.mul(getTokenPriceInUSD(mtype)).div(
+                100000000
+            );
         } else if (mtype == 2) {
-            totalPrice = usdcTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+            totalPrice = usdcTotalLiquidity.mul(getTokenPriceInUSD(mtype)).div(
+                100000000
+            );
         } else if (mtype == 3) {
-            totalPrice = usdtTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+            totalPrice = usdtTotalLiquidity.mul(getTokenPriceInUSD(mtype)).div(
+                100000000
+            );
         } else if (mtype == 4) {
-            totalPrice = btcTotalLiquidity.wadMul(getTokenPriceInUSD(mtype));
+            totalPrice = btcTotalLiquidity.mul(getTokenPriceInUSD(mtype)).div(
+                100000000
+            );
         } else if (mtype == 5) {
-            totalPrice = odonTotalLiquidity.wadMul(odonPrice);
+            totalPrice = odonTotalLiquidity.mul(odonPrice).div(100000000);
         }
         return totalPrice;
     }
@@ -784,59 +836,6 @@ contract Loan is Ownable {
     }
 
     /**
-     * @dev liquidate the unhealthed loans
-     * @param _borrower the address of borrower
-     * @param _id the id of loan
-     */
-    function liquidateUnhealthedLoans(address _borrower, uint256 _id)
-        internal
-        onlyOwner
-    {
-        // LendRequest memory
-        LoanRequest storage loanReq = loans[_borrower][_id];
-        require(!loanReq.isPayback, "payback: payback already");
-        require(
-            checkLoanHealth(_borrower, _id) == false,
-            "withdrawEther: Loan health is true"
-        );
-        loanReq.isPayback = false;
-        loanReq.isLiquidate = true;
-        emit Liquidate(
-            loanReq.borrower,
-            block.timestamp,
-            loanReq.collateralAmount,
-            loanReq.ctype
-        );
-    }
-
-    /**
-     * @dev liquidate the unhealthed loans
-     * @param _borrower the address of borrower
-     * @param _id the id of loan
-     */
-    function liquidateExpiredLoan(address _borrower, uint256 _id)
-        internal
-        onlyOwner
-    {
-        // LendRequest memory
-        LoanRequest storage loanReq = loans[_borrower][_id];
-        require(!loanReq.isPayback, "payback: payback already");
-        require(
-            checkLoanExpire(_borrower, _id) == true,
-            "withdrawEther: Loan is not expired"
-        );
-
-        loanReq.isPayback = false;
-        loanReq.isLiquidate = true;
-        emit Liquidate(
-            loanReq.borrower,
-            block.timestamp,
-            loanReq.collateralAmount,
-            loanReq.ctype
-        );
-    }
-
-    /**
      * @dev Liquidate unhealthed loans and expired loans
      */
 
@@ -844,32 +843,22 @@ contract Loan is Ownable {
         for (uint256 i = 0; i < LoanUserList.length; i++) {
             address borrower = LoanUserList[i];
             for (uint256 j = 0; j < userLoansCount[borrower]; j++) {
-                LoanRequest memory loanReq = loans[borrower][j];
-                if (
-                    !loanReq.isPayback && loanReq.loanDueDate < block.timestamp
-                ) {
-                    if (!loanReq.isPayback) {
+                LoanRequest storage loanReq = loans[borrower][j];
+                if (!loanReq.isPayback && !loanReq.isLiquidate) {
+                    if (loanReq.loanDueDate < block.timestamp) {
                         loanReq.isPayback = false;
                         loanReq.isLiquidate = true;
-                        emit Liquidate(
-                            loanReq.borrower,
-                            block.timestamp,
-                            loanReq.collateralAmount,
-                            loanReq.ctype
-                        );
+                    } else {
+                        if (checkLoanHealth(borrower, j) == false) {
+                            loanReq.isPayback = false;
+                            loanReq.isLiquidate = true;
+                        }
                     }
                 }
             }
-
-            LoanRequest[] memory unhealthloans = getUserUnHealthLoans(
-                LoanUserList[i]
-            );
-
-            for (uint256 k = 0; k < unhealthloans.length; k++) {
-                LoanRequest memory req = unhealthloans[k];
-                liquidateUnhealthedLoans(req.borrower, req.loanId);
-            }
         }
+
+        emit Liquidate(msg.sender, block.timestamp);
     }
 
     /**
@@ -900,7 +889,7 @@ contract Loan is Ownable {
         }
 
         require(
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 address(this),
                 msg.sender,
                 _amount
@@ -908,7 +897,7 @@ contract Loan is Ownable {
             "Transaction failed on init function"
         );
 
-        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
 
         if (mtype == 1) {
             totalLiquidity = totalLiquidity.sub(_amount);
@@ -932,18 +921,12 @@ contract Loan is Ownable {
     function withdraw(uint256 _id) external {
         // LendRequest memory
         LendRequest storage req = lends[msg.sender][_id];
-        require(req.lendId >= 0, "withdrawToken: Lend request not valid");
-        require(
-            req.retrieved == false,
-            "withdrawToken: Lend request retrieved"
-        );
-        require(
-            req.lender == msg.sender,
-            "withdrawEther: Only lender can withdraw"
-        );
+        require(req.lendId >= 0, "withdraw: Lend request not valid");
+        require(req.retrieved == false, "withdraw: Lend request retrieved");
+        require(req.lender == msg.sender, "withdraw: Only lender can withdraw");
         require(
             checkEnoughLiquidity(req.lendAmount, req.mtype),
-            "withDrawEther: not enough liquidity"
+            "withdraw: not enough liquidity"
         );
         req.retrieved = true;
         if (block.timestamp > req.timeCanGetInterest) {
@@ -955,13 +938,9 @@ contract Loan is Ownable {
             } else if (req.mtype == 4) {
                 tokenAddress = btcAddress;
             }
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 address(this),
                 req.lender,
-                req.paybackAmount
-            );
-            ERC20(tokenAddress).increaseAllowance(
-                address(this),
                 req.paybackAmount
             );
             if (req.mtype == 2) {
@@ -983,13 +962,9 @@ contract Loan is Ownable {
             } else if (req.mtype == 4) {
                 tokenAddress = btcAddress;
             }
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 address(this),
                 req.lender,
-                req.lendAmount
-            );
-            ERC20(tokenAddress).increaseAllowance(
-                address(this),
                 req.lendAmount
             );
             if (req.mtype == 2) {
@@ -1040,14 +1015,14 @@ contract Loan is Ownable {
             tokenAddress = btcAddress;
         }
         require(
-            ERC20(tokenAddress).transferFrom(
+            IERC20(tokenAddress).transferFrom(
                 msg.sender,
                 address(this),
                 _amount
             ),
             "payback: Transfer collateral from contract to user failed"
         );
-        ERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
 
         if (loanReq.mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
@@ -1063,16 +1038,12 @@ contract Loan is Ownable {
             collateralAddress = odonAddress;
         }
         require(
-            ERC20(collateralAddress).transferFrom(
+            IERC20(collateralAddress).transferFrom(
                 address(this),
                 msg.sender,
                 loanReq.collateralAmount
             ),
             "payback: Transfer collateral from contract to user failed"
-        );
-        ERC20(collateralAddress).increaseAllowance(
-            address(this),
-            loanReq.collateralAmount
         );
         if (loanReq.ctype == 1) {
             totalLiquidity = totalLiquidity.sub(loanReq.collateralAmount);
@@ -1120,9 +1091,11 @@ contract Loan is Ownable {
             if (
                 !req.isPayback &&
                 !req.isLiquidate &&
-                req.loanDueDate > block.timestamp
+                req.loanDueDate >= block.timestamp
             ) {
-                ongoing[i] = req;
+                if (checkLoanHealth(msg.sender, i) == true) {
+                    ongoing[i] = req;
+                }
             }
         }
         return ongoing;
@@ -1164,7 +1137,7 @@ contract Loan is Ownable {
             if (
                 !req.isPayback &&
                 !req.isLiquidate &&
-                req.loanDueDate > block.timestamp
+                req.loanDueDate >= block.timestamp
             ) {
                 if (checkLoanHealth(borrower, i) == false) {
                     unhealth[i] = req;
@@ -1242,6 +1215,23 @@ contract Loan is Ownable {
     }
 
     /**
+     * @dev set the lend apy of specific token
+     * @param _usdcltv the ltv of usdctoken
+     * @param _usdtltv the ltv of usdttoken
+     * @param _btcltv the ltv of btctoken
+     */
+    function setStandardLTV(
+        uint256 _usdcltv,
+        uint256 _usdtltv,
+        uint256 _btcltv
+    ) external onlyOwner {
+        usdcLTV = _usdcltv;
+        usdtLTV = _usdtltv;
+        btcLTV = _btcltv;
+        emit StandardLTVUpdated(_usdcltv, _usdtltv, _btcltv);
+    }
+
+    /**
      * @dev set the price of odon
      * @param _price the price of odon
      */
@@ -1255,11 +1245,7 @@ contract Loan is Ownable {
      * @param mtype the type of duration mode
      */
     function setLoanDurationMode(uint256 mtype) external onlyOwner {
-        if (mtype == 1) {
-            loanModeFirst = true;
-        } else {
-            loanModeFirst = false;
-        }
+        loanMode = mtype;
         emit LoanDurationModeUpdated(mtype);
     }
 }
