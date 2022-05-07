@@ -457,6 +457,7 @@ contract Loan is Ownable {
      */
     function loan(
         uint256 _amount,
+        uint256 _colAmount,
         uint256 _duration,
         uint256 mtype,
         uint256 ctype
@@ -477,7 +478,7 @@ contract Loan is Ownable {
         newLoan.borrower = msg.sender;
 
         newLoan.loanAmount = lnamount;
-        newLoan.collateralAmount = collateralAmount(_amount, mtype, ctype);
+        newLoan.collateralAmount = _colAmount;
         newLoan.loanId = userLoansCount[msg.sender];
         newLoan.isPayback = false;
         newLoan.isLiquidate = false;
