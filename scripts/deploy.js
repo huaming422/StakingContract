@@ -10,7 +10,7 @@ async function main() {
     const priceconsumer = await PriceConsumerV3.deploy();
     await priceconsumer.deployed();
     const Loan = await hre.ethers.getContractFactory("Loan");
-    const loan = await Loan.deploy( "0x930169A6A3F17F6E446000c74ACaE44c12413f22", "0xE3F5a90F9cb311505cd691a46596599aA1A0AD7D", "0xB44a9B6905aF7c801311e8F4E76932ee959c663C", "0xE6a991Ffa8CfE62B0bf6BF72959A3d4f11B2E0f5");
+    const loan = await Loan.deploy( "0x8b02349907B605734C0694CA67C41D057c9D8895", "0xE3F5a90F9cb311505cd691a46596599aA1A0AD7D", "0xB44a9B6905aF7c801311e8F4E76932ee959c663C", "0xE6a991Ffa8CfE62B0bf6BF72959A3d4f11B2E0f5");
     await loan.deployed();
 
     await loan.setPriceOracle(priceconsumer.address);

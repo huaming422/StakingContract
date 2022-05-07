@@ -229,7 +229,11 @@ contract Loan is Ownable {
      * @param _usdtLTV the new apy
      * @param _btcLTV the type of token
      */
-    event StandardLTVUpdated(uint256 _usdcLTV, uint256 _usdtLTV, uint256 _btcLTV);
+    event StandardLTVUpdated(
+        uint256 _usdcLTV,
+        uint256 _usdtLTV,
+        uint256 _btcLTV
+    );
 
     /**
      * @dev emitted on set price oracle
@@ -286,7 +290,6 @@ contract Loan is Ownable {
             ),
             "Transaction failed on init function"
         );
-        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
         totalLiquidity = address(this).balance;
         if (mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
@@ -458,22 +461,23 @@ contract Loan is Ownable {
         uint256 mtype,
         uint256 ctype
     ) public {
+        uint256 lnamount;
+        if (mtype == 2) {
+            lnamount = _amount.div(1000000000000);
+        } else if (mtype == 3) {
+            lnamount = _amount.div(1000000000000);
+        } else if (mtype == 4) {
+            lnamount = _amount.div(10000000000);
+        }
         require(
-            checkEnoughLiquidity(_amount, mtype),
+            checkEnoughLiquidity(lnamount, mtype),
             "loanEther: not enough liquidity"
         );
         LoanRequest memory newLoan;
         newLoan.borrower = msg.sender;
-        newLoan.loanAmount = _amount;
-        uint256 lnamount;
-        if (mtype == 2) {
-            lnamount = _amount * 1000000000000;
-        } else if (mtype == 3) {
-            lnamount = _amount * 1000000000000;
-        } else if (mtype == 4) {
-            lnamount = _amount * 10000000000;
-        }
-        newLoan.collateralAmount = collateralAmount(lnamount, mtype, ctype);
+
+        newLoan.loanAmount = lnamount;
+        newLoan.collateralAmount = collateralAmount(_amount, mtype, ctype);
         newLoan.loanId = userLoansCount[msg.sender];
         newLoan.isPayback = false;
         newLoan.isLiquidate = false;
@@ -489,20 +493,20 @@ contract Loan is Ownable {
         }
         if (loanMode == 1) {
             if (_duration == 7) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 7 days;
                 newLoan.duration = 7 days;
             } else if (_duration == 14) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(firstAddAPY + borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(firstAddAPY + borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 14 days;
                 newLoan.duration = 14 days;
             } else if (_duration == 30) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(secondAddAPY + borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(secondAddAPY + borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 30 days;
                 newLoan.duration = 30 days;
@@ -511,20 +515,20 @@ contract Loan is Ownable {
             }
         } else if (loanMode == 2) {
             if (_duration == 30) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 30 days;
                 newLoan.duration = 30 days;
             } else if (_duration == 60) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(firstAddAPY + borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(firstAddAPY + borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 60 days;
                 newLoan.duration = 60 days;
             } else if (_duration == 90) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(secondAddAPY + borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(secondAddAPY + borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 90 days;
                 newLoan.duration = 90 days;
@@ -533,20 +537,20 @@ contract Loan is Ownable {
             }
         } else if (loanMode == 3) {
             if (_duration == 90) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 90 days;
                 newLoan.duration = 90 days;
             } else if (_duration == 180) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(firstAddAPY + borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(firstAddAPY + borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 180 days;
                 newLoan.duration = 180 days;
             } else if (_duration == 360) {
-                newLoan.paybackAmount = _amount.add(
-                    _amount.wadMul(secondAddAPY + borrowAPY).div(100)
+                newLoan.paybackAmount = lnamount.add(
+                    lnamount.wadMul(secondAddAPY + borrowAPY).div(100)
                 );
                 newLoan.loanDueDate = block.timestamp + 360 days;
                 newLoan.duration = 360 days;
@@ -565,7 +569,7 @@ contract Loan is Ownable {
                 ),
                 "loanToken: Transfer token from contract to user failed"
             );
-            // IERC20(collateralAddress).increaseAllowance(
+            // ERC20(collateralAddress).increaseAllowance(
             //     address(this),
             //     newLoan.collateralAmount
             // );
@@ -589,16 +593,16 @@ contract Loan is Ownable {
             IERC20(tokenAddress).transferFrom(
                 address(this),
                 msg.sender,
-                _amount
+                lnamount
             ),
             "loanToken: Transfer token from contract to user failed"
         );
         if (mtype == 2) {
-            usdcTotalLiquidity = usdcTotalLiquidity.sub(_amount);
+            usdcTotalLiquidity = usdcTotalLiquidity.sub(lnamount);
         } else if (mtype == 3) {
-            usdtTotalLiquidity = usdtTotalLiquidity.sub(_amount);
+            usdtTotalLiquidity = usdtTotalLiquidity.sub(lnamount);
         } else if (mtype == 4) {
-            btcTotalLiquidity = btcTotalLiquidity.sub(_amount);
+            btcTotalLiquidity = btcTotalLiquidity.sub(lnamount);
         }
         loans[msg.sender][userLoansCount[msg.sender]] = newLoan;
         loanCount++;
@@ -663,7 +667,7 @@ contract Loan is Ownable {
         lendCount++;
         userLendsCount[msg.sender]++;
 
-        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // ERC20(tokenAddress).increaseAllowance(address(this), _amount);
         if (mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
         } else if (mtype == 3) {
@@ -707,7 +711,7 @@ contract Loan is Ownable {
             "lendToken: Transfer token from user to contract failed"
         );
 
-        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // ERC20(tokenAddress).increaseAllowance(address(this), _amount);
         if (mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);
         } else if (mtype == 3) {
@@ -750,11 +754,11 @@ contract Loan is Ownable {
             );
         } else if (loanReq.mtype == 3) {
             loanLTV = totalLoanPrice.wadDiv(totalCollateralPrice).mul(100).mul(
-                10000000000
+                1000000000000
             );
         } else if (loanReq.mtype == 4) {
             loanLTV = totalLoanPrice.wadDiv(totalCollateralPrice).mul(100).mul(
-                100000000
+                10000000000
             );
         }
         return loanLTV;
@@ -897,7 +901,7 @@ contract Loan is Ownable {
             "Transaction failed on init function"
         );
 
-        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // ERC20(tokenAddress).increaseAllowance(address(this), _amount);
 
         if (mtype == 1) {
             totalLiquidity = totalLiquidity.sub(_amount);
@@ -1022,7 +1026,7 @@ contract Loan is Ownable {
             ),
             "payback: Transfer collateral from contract to user failed"
         );
-        // IERC20(tokenAddress).increaseAllowance(address(this), _amount);
+        // ERC20(tokenAddress).increaseAllowance(address(this), _amount);
 
         if (loanReq.mtype == 2) {
             usdcTotalLiquidity = usdcTotalLiquidity.add(_amount);

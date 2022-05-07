@@ -782,7 +782,7 @@ contract ODON is Context, IERC20, IERC20Metadata, Ownable {
         MaxSupply = 30_000_000 * 10**_decimals;
 
         IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(
-             0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506
+            0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506
         );
         // Create a uniswap pair for this new token
         uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory())
@@ -912,19 +912,25 @@ contract ODON is Context, IERC20, IERC20Metadata, Ownable {
      * `amount`.
      */
     function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) public virtual override returns (bool) {
-        _transfer(sender, recipient, amount);
-
-        uint256 currentAllowance = _allowances[sender][_msgSender()];
-        require(
-            currentAllowance >= amount,
-            "BEP20: transfer amount exceeds allowance"
-        );
-        _approve(sender, _msgSender(), currentAllowance - amount);
-
+        address from,
+        address to,
+        uint256 value
+    ) external override returns (bool) {
+        require(to != address(0) || to != address(this));
+        if (from != msg.sender) {
+            // _decreaseAllowance(from, msg.sender, value);
+            uint256 allowed = _allowances[from][msg.sender];
+            if (allowed != type(uint256).max) {
+                require(
+                    allowed >= value,
+                    "BEP20: request exceeds allowance"
+                );
+                uint256 reduced = allowed - value;
+                _allowances[from][msg.sender] = reduced;
+                emit Approval(from, msg.sender, reduced);
+            }
+        }
+        _transfer(from, to, value);
         return true;
     }
 
@@ -1007,7 +1013,10 @@ contract ODON is Context, IERC20, IERC20Metadata, Ownable {
         uint256 _TeamAmt;
         uint256 _liquidityAmt;
         uint256 _burnAmt;
-        if (_isAutomaticMarketMaker[sender] || _isAutomaticMarketMaker[recipient]) {
+        if (
+            _isAutomaticMarketMaker[sender] ||
+            _isAutomaticMarketMaker[recipient]
+        ) {
             if (_isExcludedFromFee[sender] || _isExcludedFromFee[recipient]) {
                 _TeamAmt = 0;
                 _liquidityAmt = 0;
