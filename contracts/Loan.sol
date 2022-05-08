@@ -25,6 +25,7 @@ contract Loan is Ownable {
     uint256 public usdtTotalLiquidity;
     uint256 public btcTotalLiquidity;
     uint256 public totalLiquidity;
+    uint256 public totalLiquidatedAmount;
     uint256 public odonPrice = 0.05 * 1e8;
     address public movrAddress;
     address public odonAddress;
@@ -36,7 +37,7 @@ contract Loan is Ownable {
     uint256 public btcLTV = 54 * 1e18;
     uint256 public dangerousLTV = 85 * 1e18;
     uint256 public firstAddAPY = 3 * 1e18;
-    uint256 public secondAddAPY = 5 * 1e18;
+    uint256 public secondAddAPY = 6 * 1e18;
     uint256 public usdcBorrowAPY = 10 * 1e18;
     uint256 public usdtBorrowAPY = 11 * 1e18;
     uint256 public btcBorrowAPY = 12 * 1e18;
@@ -608,6 +609,7 @@ contract Loan is Ownable {
         loans[msg.sender][userLoansCount[msg.sender]] = newLoan;
         loanCount++;
         userLoansCount[msg.sender]++;
+        addUserToLoanUserList(msg.sender);
         emit NewLoan(
             msg.sender,
             newLoan.loanAmount,
@@ -853,17 +855,23 @@ contract Loan is Ownable {
                     if (loanReq.loanDueDate < block.timestamp) {
                         loanReq.isPayback = false;
                         loanReq.isLiquidate = true;
+                        totalLiquidatedAmount = totalLiquidatedAmount.add(
+                            loanReq.collateralAmount
+                        );
+                        emit Liquidate(msg.sender, block.timestamp);
                     } else {
                         if (checkLoanHealth(borrower, j) == false) {
                             loanReq.isPayback = false;
                             loanReq.isLiquidate = true;
+                            totalLiquidatedAmount = totalLiquidatedAmount.add(
+                                loanReq.collateralAmount
+                            );
+                            emit Liquidate(msg.sender, block.timestamp);
                         }
                     }
                 }
             }
         }
-
-        emit Liquidate(msg.sender, block.timestamp);
     }
 
     /**
@@ -914,6 +922,11 @@ contract Loan is Ownable {
             btcTotalLiquidity = btcTotalLiquidity.sub(_amount);
         } else if (mtype == 5) {
             odonTotalLiquidity = odonTotalLiquidity.sub(_amount);
+            if(totalLiquidatedAmount > _amount) {
+                totalLiquidatedAmount = totalLiquidatedAmount.sub(_amount);
+            } else {
+                totalLiquidatedAmount = 0;
+            }
         }
 
         emit WithDrawReserve(_amount, mtype);
